@@ -116,10 +116,13 @@ export const SURFACES = {
     aeroLoss: 0.2,
     dirt: 0.03,
   },
-  // gravel trap: loose rounded stones, there to stop a car. The tyre ploughs a furrow,
-  // so grip is low and flat and the rolling drag is huge (~0.4 of the wheel load,
-  // with downforce that's well over 1 g at speed), the floor bottoms out (aeroLoss) and
-  // the tread picks up dust and grit.
+  // gravel trap: loose rounded stones, there to stop a car. Grip is low and flat, the
+  // floor bottoms out (aeroLoss) and the tread picks up dust and grit. The drag depends on
+  // speed: a fast tyre digs in and ploughs a deep furrow (~0.45 of the wheel load, with
+  // downforce well over 1 g), while a slow one rides up over the stones (crrSlow). That
+  // keeps the trap stopping a car that arrives fast, but lets a stopped car crawl out at
+  // ~30-40 km/h: with a flat 0.4 the slicks (~2.4 kN of traction here) could never
+  // overcome the ~3.3 kN of drag, so a car that stopped in the gravel never moved again.
   gravel: {
     name: 'gravel',
     mu: 0.42,
@@ -128,7 +131,9 @@ export const SURFACES = {
     peakKappa: 0.25,
     lat: new SlipCurve(1.1, 0.25),
     long: new SlipCurve(1.12, 0.25),
-    crr: 0.4,
+    crr: 0.45, // ploughing, from crrSpeed[1] up
+    crrSlow: 0.07, // riding over the stones, up to crrSpeed[0]
+    crrSpeed: [3, 16], // m/s at the contact patch: the drag eases from crrSlow up to crr
     bump: 0.3,
     bumpWavelength: 0.7,
     aeroLoss: 0.35,
@@ -204,6 +209,18 @@ export const COMPOUNDS = {
 export const COMPOUND_LIST = [COMPOUNDS.soft, COMPOUNDS.medium, COMPOUNDS.hard];
 
 /** Grip multiplier from tread temperature (tOpt: the compound's window centre). */
+/**
+ * Rolling-resistance coefficient on `surface` for a contact patch moving at `v` m/s (any
+ * sign). Constant except where a surface sets crrSlow (gravel): from crrSlow at or below
+ * crrSpeed[0] easing up to crr at crrSpeed[1].
+ */
+export function rollingCoef(surface, v) {
+  if (surface.crrSlow === undefined) return surface.crr;
+  const [a, b] = surface.crrSpeed;
+  const t = Math.min(1, Math.max(0, (Math.abs(v) - a) / (b - a)));
+  return surface.crrSlow + (surface.crr - surface.crrSlow) * t * t * (3 - 2 * t);
+}
+
 export function tempGrip(T, tOpt = TYRE.tOpt) {
   const d = T - tOpt;
   const w = d < 0 ? TYRE.coldWidth : TYRE.hotWidth;
