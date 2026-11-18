@@ -613,6 +613,12 @@ export class Car {
       this.add(b, housing, this.mirrorPaint);
 
       const target = new THREE.RenderTarget(M.res[0], M.res[1], { type: THREE.HalfFloatType, samples: 4 });
+      // the same linear colour space as the main frame buffer. three.js shares render
+      // objects between targets of the same format, so with the default (none) every mesh
+      // seen in both the view and a mirror flipped colour space twice a frame and rebuilt
+      // its GPU pipeline each time (~60 pipelines a frame). Sampling it is unchanged: linear
+      // is the working colour space.
+      target.texture.colorSpace = THREE.LinearSRGBColorSpace;
       const glassMat = new THREE.MeshBasicNodeMaterial({ fog: false });
       // glass faces the driver (-Z): flip u so the image reads as a reflection.
       // three stores render targets top-row-first on every backend, hence the flipped v.
@@ -640,12 +646,16 @@ export class Car {
 
   /** Re-render the image in each mirror. Call after the main render each frame. */
   renderMirrors(renderer, scene) {
+    // one mirror per frame, taking turns: each still refreshes at half the frame rate, and
+    // every mirror pass draws the whole scene again (with a full grid, the two of them were
+    // most of the frame's draw calls)
+    this.mirrorTurn = ((this.mirrorTurn ?? 0) + 1) % this.mirrors.length;
+    let m = this.mirrors[this.mirrorTurn];
+    if (m.broken) m = this.mirrors.find((o) => !o.broken); // the other one
+    if (!m) return; // both knocked off: nothing to show
     const prev = renderer.getRenderTarget();
-    for (const m of this.mirrors) {
-      if (m.broken) continue; // knocked off: nothing to show
-      renderer.setRenderTarget(m.target);
-      renderer.render(scene, m.camera);
-    }
+    renderer.setRenderTarget(m.target);
+    renderer.render(scene, m.camera);
     renderer.setRenderTarget(prev);
   }
 
