@@ -233,11 +233,19 @@ async function start() {
   }
   const raceKey = (o) => `${track.def.id}|${car.team.id}|${o.opponents}|${o.laps}|${o.difficulty}`;
 
+  // AI cars by team, kept between races: a car doesn't depend on the track, and building
+  // one means building its shaders again (most of the extra load time of a full grid)
+  const aiCars = new Map();
+  const aiCar = (team) => {
+    if (!aiCars.has(team.id)) aiCars.set(team.id, new Car(team, { ai: true }));
+    return aiCars.get(team.id);
+  };
+
   /** Build (or clear) the AI field for the current track, team and settings. */
   function buildRace() {
     for (const e of race?.ai ?? []) {
       scene.remove(e.car.group, e.car.debris);
-      e.car.dispose();
+      e.car.clearDebris();
     }
     race = null;
     const opts = raceOptions();
@@ -245,9 +253,7 @@ async function start() {
       race = new Race(track.path, car.team, physics, TEAMS, opts);
       race.key = raceKey(opts);
       for (const e of race.ai) {
-        e.car = new Car(e.team);
-        // only the player's mirrors are rendered: hide the AI cars' glass
-        for (const m of e.car.mirrors) m.glass.visible = false;
+        e.car = aiCar(e.team);
         scene.add(e.car.group, e.car.debris);
       }
       race.onFinish = (e, place) => {
@@ -273,6 +279,7 @@ async function start() {
     crews.wheelOn.forEach((on, i) => car.setWheelVisible(i, on));
     for (const e of race?.ai ?? []) {
       const c = e.car, p = e.physics;
+      c.setLod(Math.hypot(p.position.x - camera.position.x, p.position.z - camera.position.z));
       c.update(p, dt);
       c.setWing(p.damage, 'car', p);
       c.setDamage(p.damage, p, dt);
