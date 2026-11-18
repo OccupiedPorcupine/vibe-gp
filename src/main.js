@@ -22,6 +22,7 @@ import { PitCrews } from './pitCrew.js';
 import { COMPOUND_LIST } from './tyres.js';
 import { DAMAGE } from './damage.js';
 import { Sound } from './sound.js';
+import { Race } from './ai.js';
 
 const SUN_DIR = [0.45, 0.8, 0.35];
 // Night races: the key light is the floodlights, nearly overhead (short shadows under the
@@ -172,6 +173,7 @@ async function start() {
   let car = null;
   let crews = null;
   let showroom = null; // the ground under the car in the menu, until the first track loads
+  let race = null; // AI opponents (src/ai.js), or null for a solo run
 
   // tyre compound for the next stop: keys 1-3 in the race, or click the HUD tyres
   const pickCompound = (c) => {
@@ -199,7 +201,7 @@ async function start() {
     physics.abs = settings.get('abs');
     physics.damageOn = settings.get('damage');
   };
-  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS' };
+  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS', ai: 'AI OPPONENTS', aiLevel: 'AI DIFFICULTY', laps: 'RACE LAPS' };
   settings.onChange = (id, on) => {
     if (id === 'music') sound.setMusic(on);
     if (id === 'sound') sound.setSfx(on);
@@ -209,9 +211,55 @@ async function start() {
     if (id === 'damage' && !on) {
       physics.damage.reset();
       car.clearDebris();
+      for (const e of race?.ai ?? []) {
+        e.physics.damage.reset();
+        e.car.clearDebris();
+      }
     }
-    timer.flash = { text: `${SETTING_NAMES[id]} ${on ? 'ON' : 'OFF'}`, until: timer.time + 1.5 };
+    // a new field (or none) means a fresh start from the grid
+    if (id === 'ai' || id === 'aiLevel' || id === 'laps') resetCar();
+    const value = on === true ? 'ON' : on === false ? 'OFF' : String(on).toUpperCase();
+    timer.flash = { text: `${SETTING_NAMES[id]} ${value}`, until: timer.time + 1.5 };
   };
+
+  // ---- AI opponents: ?ai=<count> (0 = none), ?laps=<n> and ?difficulty=easy|normal|hard override Settings ----
+  const LEVELS = { easy: 0.92, normal: 1, hard: 1.035 };
+  const query = new URLSearchParams(location.search);
+  function raceOptions() {
+    const opponents = query.has('ai') ? Math.max(0, Math.min(10, +query.get('ai') || 0)) : settings.get('ai') ? (MOBILE ? 5 : 10) : 0;
+    const laps = Math.max(1, +(query.get('laps') ?? settings.get('laps')) || 5);
+    const level = query.get('difficulty') ?? settings.get('aiLevel');
+    return { opponents, laps, difficulty: LEVELS[level] ?? 1 };
+  }
+  const raceKey = (o) => `${track.def.id}|${car.team.id}|${o.opponents}|${o.laps}|${o.difficulty}`;
+
+  /** Build (or clear) the AI field for the current track, team and settings. */
+  function buildRace() {
+    for (const e of race?.ai ?? []) {
+      scene.remove(e.car.group, e.car.debris);
+      e.car.dispose();
+    }
+    race = null;
+    const opts = raceOptions();
+    if (opts.opponents > 0) {
+      race = new Race(track.path, car.team, physics, TEAMS, opts);
+      race.key = raceKey(opts);
+      for (const e of race.ai) {
+        e.car = new Car(e.team);
+        // only the player's mirrors are rendered: hide the AI cars' glass
+        for (const m of e.car.mirrors) m.glass.visible = false;
+        scene.add(e.car.group, e.car.debris);
+      }
+      race.onFinish = (e, place) => {
+        if (e.isPlayer) timer.flash = { text: place === 1 ? 'YOU WIN!' : `FINISHED P${place}`, until: timer.time + 6, best: place === 1 };
+        else if (place === 1 && !race.player.finished) timer.flash = { text: `CHEQUERED FLAG · ${e.team.name.toUpperCase()} WINS`, until: timer.time + 3 };
+      };
+    }
+    hud.setRace(race);
+  }
+
+  /** The player's starting spot: their grid slot in a race, pole when driving alone. */
+  const playerGrid = () => (race ? race.playerGrid() : track.path.gridPose(0));
 
   /** Animate the pit crews, then draw the car (on the jacks / wheels off mid stop). */
   function syncCar(dt) {
@@ -223,6 +271,14 @@ async function start() {
     car.updateDebris(dt);
     car.setCompound(crews.carCompound ?? physics.compound);
     crews.wheelOn.forEach((on, i) => car.setWheelVisible(i, on));
+    for (const e of race?.ai ?? []) {
+      const c = e.car, p = e.physics;
+      c.update(p, dt);
+      c.setWing(p.damage, 'car', p);
+      c.setDamage(p.damage, p, dt);
+      c.updateDebris(dt);
+      c.setCompound(p.compound);
+    }
   }
 
   /**
@@ -327,6 +383,9 @@ async function start() {
     timer.best = loadBest(def.id);
     hud.setTrack(track.path, def);
     syncBox();
+    buildRace();
+    physics.reset(playerGrid());
+    applySettings();
     // compile the new materials' shaders now, behind the loading screen, rather than in a
     // stutter on the first frames. The render loop stays paused (`compiling`) until this is
     // done: a frame drawn meanwhile would create every pipeline synchronously, one at a
@@ -350,7 +409,11 @@ async function start() {
   }
 
   function resetCar() {
-    physics.reset(track.path.gridPose(0));
+    // a different team, field size, length or difficulty needs a new field
+    if ((race?.key ?? null) !== (raceOptions().opponents > 0 ? raceKey(raceOptions()) : null)) buildRace();
+    else race?.reset();
+    for (const e of race?.ai ?? []) e.car.clearDebris();
+    physics.reset(playerGrid());
     applySettings(); // reset() puts the aids back to their defaults
     const best = timer.best;
     timer.reset();
@@ -454,6 +517,8 @@ async function start() {
           saveBest(track.def.id, timer.best);
           menu.refreshBest(track.def.id);
         }
+        // the AI cars, then car-to-car contact (after the timer, so a finish flash wins)
+        race?.stepAI(startLights.holding, FIXED, { damage: settings.get('damage') });
         acc -= FIXED;
       }
       syncCar(dt);
@@ -470,9 +535,10 @@ async function start() {
 
     boxMarker.update(dt, pitStop, !menu.visible);
     hud.update(physics, timer, rig.mode, pitStop);
+    hud.updateRace(now / 1000);
     sound.update(physics, { camera, mode: rig.mode, racing: !menu.visible });
     if (import.meta.env.DEV) {
-      window.__game = { physics, timer, startLights, track, pitStop, crews, loadTrack, TRACKS, menu, car, setTeam, TEAMS, scene, sun, floods, renderer, sound };
+      window.__game = { race, physics, timer, startLights, track, pitStop, crews, loadTrack, TRACKS, menu, car, setTeam, TEAMS, scene, sun, floods, renderer, sound };
       // automated screenshots can pin the camera: window.__fixedCam = { x, y, z, tx, ty, tz }
       const fc = window.__fixedCam;
       if (fc) {

@@ -95,6 +95,19 @@ A track can have a pit lane: add `pitlane: { points: [...] }` with the lane's ce
 
 Each team has its own garage and pit box, in `TEAMS` order from the pit entry (`teamGarage` in `src/teams.js`); spare garages have their shutters down. The box is painted on the working lane in team colours with a stop line for the front axle (`src/pitBoxes.js`). Pull into your team's box and stop on the marks: the crew holds the car and fits fresh tyres, and the stop takes longer the further you are off the marks (`src/pitStop.js`). The HUD counts down the distance to your box, and the minimap marks it. `track-check` also drives into every team's box, stops there and drives out.
 
+## AI opponents
+
+By default you race the other ten teams (five on touch devices) over 5 laps, starting from the back of the grid (`src/ai.js`). The AI cars drive the same physics as yours:
+
+- **Racing line**: a minimum-curvature line inside the asphalt and clear of any walls that squeeze into it, found by repeatedly smoothing a lateral offset per centreline sample. Its speed profile comes from the tyre grip summary in `PARAMS` (corner speed, then braking zones worked backwards), tuned so a lone car laps every circuit without touching a wall.
+- **Driving**: pure pursuit on that line, holding the profile speed scaled by the team's pace (the 2025 constructors' order: McLaren quickest, Cadillac slowest), with a slow random wobble so they don't drive like a train.
+- **Traffic**: each car looks further up the road the faster it goes. It brakes for a slower car in its path, pulls out to pass on the side with more room (never across a car alongside), and keeps a car's width from a car next to it. A car stuck or facing backwards for a few seconds is put back on the line behind where it was.
+- **Contact**: cars are three circles along their length; overlaps are pushed apart, the closing speed is shared, off-centre hits spin the car, and (with damage on) both cars are damaged.
+
+The HUD shows your position and laps, and a timing tower with gaps to the leader. Settings has *AI opponents* on / off, *AI difficulty* (easy / normal / hard) and *Race length* (3, 5, 10 or 20 laps). URL overrides: `?ai=<0-10>` opponents, `?laps=<n>`, `?difficulty=easy|normal|hard`.
+
+`node scripts/ai-check.mjs <track> [laps] [opponents] [difficulty]` runs a whole race headless (every car AI-driven) and prints the result, best laps, wall contacts, time off track and respawns.
+
 ## Damage
 
 Hitting a wall can damage every part of the car except the survival cell (monocoque and halo) (`src/damage.js`). Press **B** to switch damage off and on; switching it off also repairs the car.
