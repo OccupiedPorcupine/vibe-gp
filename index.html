@@ -64,6 +64,7 @@
       <div class="panel timing">
         <div class="row track"><span id="track-name"></span></div>
         <div class="row team"><span id="team-name"></span></div>
+        <div class="row pos" id="pos-row" hidden><span class="label">POS</span><span id="pos">-</span></div>
         <div class="row"><span class="label">LAP</span><span id="lap">OUT</span></div>
         <div class="row big"><span class="label">TIME</span><span id="current">--:--.---</span></div>
         <div class="row"><span class="label">LAST</span><span id="last">--:--.---</span></div>
@@ -100,6 +101,11 @@
       </div>
 
       <div class="panel map"><svg id="minimap"></svg></div>
+
+      <div id="standings" class="panel standings" hidden>
+        <div class="head"><span id="standings-title">RACE</span><span id="standings-laps"></span></div>
+        <ol id="standings-list"></ol>
+      </div>
 
       <div id="flash"></div>
       <div id="surface"></div>

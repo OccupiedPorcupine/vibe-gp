@@ -96,6 +96,67 @@ export class Hud {
     this.el.trackName.textContent = def.name;
   }
 
+  /**
+   * The race field (src/ai.js Race, or null for a solo run): a minimap dot per AI car,
+   * the timing tower and the position row.
+   */
+  setRace(race) {
+    this.race = race;
+    this.el.map.querySelectorAll('.map-ai').forEach((n) => n.remove());
+    this.aiDots = [];
+    const tower = document.getElementById('standings');
+    tower.hidden = !race;
+    document.getElementById('pos-row').hidden = !race;
+    this.towerAt = -1;
+    if (!race || !this.mapCar) return;
+    for (const e of race.ai) {
+      const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.classList.add('map-ai');
+      c.setAttribute('r', (this.mapSw * 0.95).toFixed(1));
+      c.setAttribute('fill', e.team.ui.primary);
+      c.setAttribute('stroke', e.team.ui.accent);
+      c.setAttribute('stroke-width', (this.mapSw * 0.3).toFixed(1));
+      this.mapCar.before(c); // the player's dot stays on top
+      this.aiDots.push({ e, c });
+    }
+  }
+
+  updateRace(now) {
+    const race = this.race;
+    if (!race) return;
+    for (const { e, c } of this.aiDots) {
+      c.setAttribute('cx', e.physics.position.x.toFixed(1));
+      c.setAttribute('cy', e.physics.position.z.toFixed(1));
+    }
+    const me = race.player;
+    document.getElementById('pos').textContent = `${me.position} / ${race.entries.length}`;
+    this.el.lap.textContent = me.finished ? 'FINISHED' : me.lap === 0 ? 'OUT' : `${Math.min(me.lap, race.laps)} / ${race.laps}`;
+    // the tower: a few times a second is plenty
+    if (now - this.towerAt < 0.25) return;
+    this.towerAt = now;
+    const leader = race.order[0];
+    const done = me.finished;
+    document.getElementById('standings-title').textContent = done ? 'FINAL RESULT' : race.leaderDone ? 'CHEQUERED FLAG' : 'RACE';
+    const lap = Math.min(race.laps, Math.max(1, leader.lap));
+    document.getElementById('standings-laps').textContent = `LAP ${lap}/${race.laps}`;
+    const L = race.path.length;
+    const rows = race.order.map((e) => {
+      let gap = '';
+      if (race.sinceGreen === 0) gap = `P${e.slot + 1}`; // on the grid: the starting slot
+      else if (e.position === 1) gap = e.finished ? formatTime(e.finishTime) : 'LEADER';
+      else if (e.finished && leader.finished) {
+        const lapsDown = race.laps - Math.round(e.flagAt / L);
+        gap = lapsDown > 0 ? `+${lapsDown} LAP${lapsDown > 1 ? 'S' : ''}` : `+${(e.finishTime - leader.finishTime).toFixed(1)}`;
+      } else {
+        const down = Math.floor((leader.progress - e.progress) / L);
+        gap = down >= 1 ? `+${down} LAP${down > 1 ? 'S' : ''}` : `+${race.gapTo(e, leader).toFixed(1)}`;
+      }
+      const name = e.isPlayer ? 'YOU' : e.team.name;
+      return `<li class="${e.isPlayer ? 'me' : ''}${e.finished ? ' done' : ''}"><span class="p">${e.position}</span><i style="background:${e.team.ui.primary}"></i><span>${name}</span><span class="gap">${gap}</span></li>`;
+    });
+    document.getElementById('standings-list').innerHTML = rows.join('');
+  }
+
   update(car, timer, camMode, pitStop = null) {
     const e = this.el;
     if (this.mapCar) {
@@ -106,7 +167,7 @@ export class Hud {
     e.gear.textContent = car.gear;
     e.rpm.style.width = `${(car.rpm * 100).toFixed(1)}%`;
     e.rpm.classList.toggle('redline', car.rpm > 0.93);
-    e.lap.textContent = timer.lap === 0 ? 'OUT' : timer.lap;
+    if (!this.race) e.lap.textContent = timer.lap === 0 ? 'OUT' : timer.lap;
     e.current.textContent = formatTime(timer.current);
     e.last.textContent = formatTime(timer.last);
     e.best.textContent = formatTime(timer.best);
