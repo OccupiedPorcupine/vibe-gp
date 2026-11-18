@@ -26,7 +26,7 @@
 // (toe-out pulls the car, camber costs grip); damaged tyres grip less and drag.
 import { CAR_DIMS } from './car.js';
 import { KERB_WIDTH, WALL_THICKNESS, PIT } from './trackPath.js';
-import { SURFACES, TYRE, COMPOUNDS, tyreForce, tempGrip, peakForce } from './tyres.js';
+import { SURFACES, TYRE, COMPOUNDS, tyreForce, tempGrip, peakForce, rollingCoef } from './tyres.js';
 import { CarDamage, DAMAGE } from './damage.js';
 
 const G = 9.81;
@@ -402,7 +402,7 @@ export class CarPhysics {
       const eps = 1e-3;
       const f1 = tyreForce(S, kap0 + eps, tanA, fz, grip).fx;
       const dFdOmega = Math.max(0, (f1 - f0) / eps) * (w.r / den);
-      const crr = S.crr + DAMAGE.tyreCrr * w.damage + DAMAGE.suspCrr * w.susp;
+      const crr = rollingCoef(S, wvx) + DAMAGE.tyreCrr * w.damage + DAMAGE.suspCrr * w.susp;
       const rollT = crr * fz * w.r * Math.tanh(w.omega * w.r / 0.5);
       const Ieff = I + h * w.r * w.r * dFdOmega;
       let om = w.omega + (h * (tDrive - f0 * w.r - rollT)) / Ieff;

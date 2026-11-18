@@ -145,6 +145,7 @@ Grip comes from a tyre model rather than fixed grip numbers, so each of the four
 | Asphalt | 1.8 | none |
 | Kerb | 1.6 (non-slip paint) | ridges make the tyre load fluctuate; the floor loses ~20% downforce per wheel on the kerb |
 | Grass | 0.55 | flat slip curve (sliding is about as good as gripping), extra rolling resistance, ~20% downforce loss, picks up dirt that costs up to 8% grip until it scrubs off on asphalt |
+| Gravel | 0.42 | flat slip curve, ~35% downforce loss, picks up grit. Drag depends on speed: a fast tyre ploughs in (0.45 × wheel load above ~60 km/h, so a car arriving at 150 km/h stops in ~45–90 m), a slow one rides over the stones (0.07 at walking pace), so a car that stops in the trap can still crawl out at ~20 km/h, forwards or in reverse |
 
 Measured in the model: about 2 g in slow corners, about 4.5 g at 230 km/h, 0–100 km/h in 2.5 s, 300–0 km/h in 85 m (peak deceleration about 7 g), and a 324 km/h top speed. Grip and braking are tuned above real F1 figures (about 5 g peak cornering, 300–0 km/h in about 4 s) to make the car more responsive.
 
