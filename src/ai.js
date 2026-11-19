@@ -17,6 +17,7 @@ const LINE_MARGIN = 1.5; // m between the racing line and the edge of the asphal
 const WALL_MARGIN = 2.2; // m between the racing line and a wall face
 const CAR_R = 1.0; // collision circle radius, m
 const CAR_CIRCLES = [-1.75, 0, 1.75]; // circle centres along the car, m from the CoG (car is ~5.6 m long)
+const RETIRE_TRIES = 6; // no-resets mode: recoveries that fail in a row before a car retires
 const STAMP = 20, STAMP_OFFSET = 400; // timing loops every 20 m, from 400 m behind the line
 const MASS = PARAMS.mass, INERTIA = PARAMS.yawInertia;
 
@@ -114,6 +115,11 @@ export function racingLine(P, { gripUse = 1.15, brakeUse = 0.86 } = {}) {
   };
 }
 
+/** Damage an AI car can't race on (no-resets mode): broken suspension or a dead engine. */
+function wrecked(d) {
+  return d.suspension.some((x) => x >= 0.6) || d.engine >= 0.95;
+}
+
 /** Signed distance from s0 to s1 along the lap, in (-L/2, L/2]. */
 function lapDelta(s1, s0, L) {
   let d = s1 - s0;
@@ -132,6 +138,9 @@ export class AIDriver {
     this.offset = 0; // extra lateral offset for traffic (m, + = left)
     this.offsetTarget = 0;
     this.stuck = 0;
+    this.resets = true; // false: no-resets mode, a stuck car gets itself out or retires
+    this.rec = null; // no-resets recovery in progress: { phase, t }
+    this.tries = 0; // recoveries since the car last got properly going
     this.rand = mulberry32(seed);
     this.wobble = 0; // slow-varying small pace variation, so they don't drive like trains
     this.wobbleT = 0;
@@ -143,6 +152,8 @@ export class AIDriver {
     const P = car.track;
     const L = P.length;
     if (sinceGreen < this.reaction) return { steer: 0, throttle: 0, brake: 1 };
+    // no-resets mode: a car too badly damaged to race (it can't pit) pulls over and retires
+    if (!this.resets && (this.parking || wrecked(car.damage))) return this.pullOver();
 
     this.wobbleT -= dt;
     if (this.wobbleT <= 0) {
@@ -228,10 +239,17 @@ export class AIDriver {
     const back = Math.abs(Math.atan2(Math.sin(heading - car.yaw), Math.cos(heading - car.yaw))) > 1.8;
     if (v < 2 || back) this.stuck += dt;
     else this.stuck = Math.max(0, this.stuck - dt * 2);
-    if (this.stuck > 3.5) {
-      this.stuck = 0;
-      this.respawn(field);
-      return { steer: 0, throttle: 0, brake: 0 };
+    if (this.resets) {
+      this.rec = null;
+      if (this.stuck > 3.5) {
+        this.stuck = 0;
+        this.respawn(field);
+        return { steer: 0, throttle: 0, brake: 0 };
+      }
+    } else {
+      if (!this.rec && v > 15 && !back) this.tries = 0; // properly going again
+      const r = this.recover(err, back, dt);
+      if (r) return r;
     }
 
     return {
@@ -239,6 +257,73 @@ export class AIDriver {
       throttle: v < vt ? 1 : 0,
       brake: v > vt + 1.5 ? Math.min(1, (v - vt) / 4) : 0,
     };
+  }
+
+  /**
+   * No-resets mode: a stuck or spun car gets itself going. It backs away from whatever it
+   * is stuck on, steering so the nose swings towards the line, then drives off slowly at
+   * up to full lock; facing the wrong way, the two together make a three-point turn and
+   * repeat until it points down the track. After RETIRE_TRIES tries in a row that get it
+   * nowhere, it retires (Race parks it). Returns this step's controls, or null to drive.
+   */
+  recover(err, back, dt) {
+    const car = this.entry.physics;
+    if (!this.rec) {
+      if (this.stuck < 1.5) return null;
+      // turn the same way for the whole episode: near 180° the shorter way flips back and
+      // forth, and the reverse and forward moves would undo each other
+      if (this.tries === 0) this.turnDir = err >= 0 ? 1 : -1;
+      // back away first only when it's against something or has to turn round
+      const reverse = back || car.wallHit > 0 || this.lastFailed;
+      this.rec = { phase: reverse ? 'reverse' : 'forward', t: 0, x: car.position.x, z: car.position.z };
+    }
+    const r = this.rec;
+    r.t += dt;
+    // facing the wrong way: full lock round; otherwise steer for the line
+    const steer = back ? this.turnDir : Math.max(-1, Math.min(1, err * 3.5));
+    if (r.phase === 'reverse') {
+      if (r.t > 1.8 || (car.wallHit > 0.05 && r.t > 0.4)) {
+        r.phase = 'forward';
+        r.t = 0;
+      }
+      // in reverse the nose swings the opposite way to the steering. The brake key backs
+      // the car up once it has stopped; hold it under ~9 km/h backwards.
+      return { steer: -steer, throttle: 0, brake: car.speed > -2.5 ? 1 : 0 };
+    }
+    const going = car.speed > 6 && !back;
+    if (going || r.t > 4 || (car.wallHit > 0.05 && r.t > 0.5)) {
+      // a try counts against the car only if it got nowhere (a crawl through gravel is
+      // progress, if slow)
+      const moved = Math.hypot(car.position.x - r.x, car.position.z - r.z);
+      this.lastFailed = !going && moved < 3;
+      this.tries = this.lastFailed ? this.tries + 1 : going ? 0 : this.tries;
+      this.rec = null;
+      if (this.tries > RETIRE_TRIES) {
+        this.entry.retire?.();
+        return { steer: 0, throttle: 0, brake: 0 };
+      }
+      this.stuck = going ? 0 : 1.5; // not going yet: the next try starts at once
+      return null;
+    }
+    return { steer, throttle: car.speed < 8 ? 1 : 0, brake: 0 };
+  }
+
+  /** Coast and brake to just off the asphalt on the nearer side, stop, and retire. */
+  pullOver() {
+    const car = this.entry.physics;
+    const P = car.track;
+    const v = Math.abs(car.speed);
+    this.parking ??= { side: car.lateral >= 0 ? 1 : -1 };
+    if (v < 1) {
+      this.entry.retire?.();
+      return { steer: 0, throttle: 0, brake: 0 };
+    }
+    const look = 6 + v * 0.3;
+    const lim = this.line.limits(car.trackS + look);
+    const tgt = P.poseAt(car.trackS + look, this.parking.side > 0 ? lim.left + 1.5 : lim.right - 1.5);
+    const aim = Math.atan2(tgt.x - car.position.x, tgt.z - car.position.z);
+    const err = Math.atan2(Math.sin(aim - car.yaw), Math.cos(aim - car.yaw));
+    return { steer: Math.max(-1, Math.min(1, err * 3)), throttle: 0, brake: v > 12 ? 0.6 : 0.3 };
   }
 
   /** Put a stuck car back on the racing line, a little behind where it was, out of the way. */
@@ -341,6 +426,7 @@ export class Entry {
     this.lap = 0; // laps started (0 = before the line)
     this.finished = false;
     this.finishTime = null;
+    this.retired = false; // no-resets mode: gave up, parked where it stopped
     this.position = 0;
     this.stamps = []; // race time when the car first reached each STAMP metres of progress
   }
@@ -392,6 +478,11 @@ export class Race {
       const physics = new CarPhysics(path, path.gridPose(slot));
       const e = new Entry({ team, physics });
       e.slot = slot;
+      e.retire = () => {
+        if (e.retired || e.finished) return;
+        e.retired = true;
+        this.onRetire?.(e);
+      };
       const ti = teams.indexOf(team);
       e.driver = new AIDriver(e, this.line, {
         pace: teamPace(ti, difficulty),
@@ -427,9 +518,13 @@ export class Race {
       e.finished = false;
       e.finishTime = null;
       e.flagAt = undefined;
+      e.retired = false;
       if (e.driver) {
         e.driver.offset = e.driver.offsetTarget = 0;
         e.driver.stuck = 0;
+        e.driver.rec = null;
+        e.driver.tries = 0;
+        e.driver.parking = null;
       }
     }
     this.rank();
@@ -451,6 +546,12 @@ export class Race {
       if (e.isPlayer) continue;
       const p = e.physics;
       if (settings.damage !== undefined) p.damageOn = settings.damage;
+      if (settings.resets !== undefined) e.driver.resets = settings.resets;
+      // retired: parked where it stopped (other cars can still shove it)
+      if (e.retired) {
+        p.step({ hold: true }, dt);
+        continue;
+      }
       // finished: cruise round at a gentle pace
       const ctl = e.driver.drive(this.entries, holding ? 0 : this.sinceGreen, dt);
       if (e.finished) {
@@ -464,14 +565,14 @@ export class Race {
       e.track(L, this.time);
       const lap = Math.floor(e.progress / L) + 1; // lap 1 starts at the line
       if (lap > e.lap && e.progress >= 0) e.lap = lap;
-      if (!e.finished && e.progress >= (e.flagAt ?? this.laps * L)) {
+      if (!e.finished && !e.retired && e.progress >= (e.flagAt ?? this.laps * L)) {
         e.finished = true;
         e.finishTime = this.sinceGreen;
         this.finishOrder.push(e);
         if (!this.leaderDone) {
           // the leader has the flag: everyone else finishes the next time they cross the line
           this.leaderDone = true;
-          for (const o of this.entries) if (!o.finished) o.flagAt = Math.min(this.laps * L, (Math.floor(o.progress / L) + 1) * L);
+          for (const o of this.entries) if (!o.finished && !o.retired) o.flagAt = Math.min(this.laps * L, (Math.floor(o.progress / L) + 1) * L);
         }
         this.onFinish?.(e, this.finishOrder.length);
       }
@@ -483,6 +584,7 @@ export class Race {
     const sorted = [...this.entries].sort((a, b) => {
       if (a.finished && b.finished) return this.finishOrder.indexOf(a) - this.finishOrder.indexOf(b);
       if (a.finished !== b.finished) return a.finished ? -1 : 1;
+      if (a.retired !== b.retired) return a.retired ? 1 : -1; // retired cars at the bottom
       return b.progress - a.progress;
     });
     sorted.forEach((e, i) => (e.position = i + 1));

@@ -127,6 +127,7 @@ export class Hud {
     for (const { e, c } of this.aiDots) {
       c.setAttribute('cx', e.physics.position.x.toFixed(1));
       c.setAttribute('cy', e.physics.position.z.toFixed(1));
+      c.setAttribute('opacity', e.retired ? 0.35 : 1);
     }
     const me = race.player;
     document.getElementById('pos').textContent = `${me.position} / ${race.entries.length}`;
@@ -143,6 +144,7 @@ export class Hud {
     const rows = race.order.map((e) => {
       let gap = '';
       if (race.sinceGreen === 0) gap = `P${e.slot + 1}`; // on the grid: the starting slot
+      else if (e.retired) gap = 'OUT';
       else if (e.position === 1) gap = e.finished ? formatTime(e.finishTime) : 'LEADER';
       else if (e.finished && leader.finished) {
         const lapsDown = race.laps - Math.round(e.flagAt / L);
@@ -152,7 +154,7 @@ export class Hud {
         gap = down >= 1 ? `+${down} LAP${down > 1 ? 'S' : ''}` : `+${race.gapTo(e, leader).toFixed(1)}`;
       }
       const name = e.isPlayer ? 'YOU' : e.team.name;
-      return `<li class="${e.isPlayer ? 'me' : ''}${e.finished ? ' done' : ''}"><span class="p">${e.position}</span><i style="background:${e.team.ui.primary}"></i><span>${name}</span><span class="gap">${gap}</span></li>`;
+      return `<li class="${e.isPlayer ? 'me' : ''}${e.finished ? ' done' : ''}${e.retired ? ' out' : ''}"><span class="p">${e.position}</span><i style="background:${e.team.ui.primary}"></i><span>${name}</span><span class="gap">${gap}</span></li>`;
     });
     document.getElementById('standings-list').innerHTML = rows.join('');
   }

@@ -1,6 +1,7 @@
 // Headless AI race: every car (the "player" too) driven by the AI on the real physics.
 //
 //   node scripts/ai-check.mjs <trackId> [laps] [opponents] [difficulty]
+//   NORESETS=1 node scripts/ai-check.mjs ...   (no-resets mode: stuck cars recover or retire)
 //
 // Prints each car's best lap, finishing order, wall contacts, off-track time and respawns.
 // logos.js builds Path2D objects at import time (browser only): stub it for Node
@@ -38,12 +39,12 @@ const dt = 1 / 120;
 let hold = 3.6;
 const tSim = performance.now();
 let frames = 0;
-while (race.finishOrder.length < race.entries.length && race.time < 60 * 20) {
+while (race.finishOrder.length < race.entries.filter((e) => !e.retired).length && race.time < 60 * 20) {
   const holding = hold > 0;
   hold -= dt;
   const ctl = race.player.driver.drive(race.entries, holding ? 0 : race.sinceGreen, dt);
   player.step(holding ? { ...ctl, hold: true } : ctl, dt);
-  race.stepAI(holding, dt);
+  race.stepAI(holding, dt, { resets: !process.env.NORESETS });
   frames++;
   for (const e of race.entries) {
     const s = stats.get(e);
@@ -61,5 +62,5 @@ const ms = performance.now() - tSim;
 console.log(`simulated ${(race.time).toFixed(0)} s in ${(ms / 1000).toFixed(1)} s (${((ms / frames) * 1000 / race.entries.length).toFixed(0)} µs per car-step)`);
 for (const e of race.order) {
   const s = stats.get(e);
-  console.log(`P${String(e.position).padEnd(3)} ${e.team.name.padEnd(13)} grid ${String(e.slot + 1).padStart(2)}  ${e.finished ? formatTime(e.finishTime) : 'DNF      '}  best ${s.best < Infinity ? formatTime(s.best) : '--'}  pace ${e.driver.pace.toFixed(3)}  wall ${String(s.wall).padStart(4)}  off ${(s.off * dt).toFixed(1).padStart(5)} s  respawns ${s.respawn}`);
+  console.log(`P${String(e.position).padEnd(3)} ${e.team.name.padEnd(13)} grid ${String(e.slot + 1).padStart(2)}  ${e.finished ? formatTime(e.finishTime) : e.retired ? 'RETIRED  ' : 'DNF      '}  best ${s.best < Infinity ? formatTime(s.best) : '--'}  pace ${e.driver.pace.toFixed(3)}  wall ${String(s.wall).padStart(4)}  off ${(s.off * dt).toFixed(1).padStart(5)} s  respawns ${s.respawn}`);
 }

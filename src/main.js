@@ -201,7 +201,7 @@ async function start() {
     physics.abs = settings.get('abs');
     physics.damageOn = settings.get('damage');
   };
-  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS', ai: 'AI OPPONENTS', aiLevel: 'AI DIFFICULTY', laps: 'RACE LAPS' };
+  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS', ai: 'AI OPPONENTS', aiLevel: 'AI DIFFICULTY', laps: 'RACE LAPS', noResets: 'NO RESETS' };
   settings.onChange = (id, on) => {
     if (id === 'music') sound.setMusic(on);
     if (id === 'sound') sound.setSfx(on);
@@ -222,7 +222,8 @@ async function start() {
     timer.flash = { text: `${SETTING_NAMES[id]} ${value}`, until: timer.time + 1.5 };
   };
 
-  // ---- AI opponents: ?ai=<count> (0 = none), ?laps=<n> and ?difficulty=easy|normal|hard override Settings ----
+  // ---- AI opponents: ?ai=<count> (0 = none), ?laps=<n>, ?difficulty=easy|normal|hard and
+  // ?resets=0 (no-resets mode) override Settings ----
   const LEVELS = { easy: 0.92, normal: 1, hard: 1.035 };
   const query = new URLSearchParams(location.search);
   function raceOptions() {
@@ -231,6 +232,8 @@ async function start() {
     const level = query.get('difficulty') ?? settings.get('aiLevel');
     return { opponents, laps, difficulty: LEVELS[level] ?? 1 };
   }
+  // no-resets mode: crashed AI cars aren't put back on the track (applies at once, mid-race too)
+  const aiResets = () => (query.has('resets') ? query.get('resets') !== '0' : !settings.get('noResets'));
   const raceKey = (o) => `${track.def.id}|${car.team.id}|${o.opponents}|${o.laps}|${o.difficulty}`;
 
   // AI cars by team, kept between races: a car doesn't depend on the track, and building
@@ -259,6 +262,9 @@ async function start() {
       race.onFinish = (e, place) => {
         if (e.isPlayer) timer.flash = { text: place === 1 ? 'YOU WIN!' : `FINISHED P${place}`, until: timer.time + 6, best: place === 1 };
         else if (place === 1 && !race.player.finished) timer.flash = { text: `CHEQUERED FLAG · ${e.team.name.toUpperCase()} WINS`, until: timer.time + 3 };
+      };
+      race.onRetire = (e) => {
+        timer.flash = { text: `${e.team.name.toUpperCase()} RETIRES`, until: timer.time + 2.5, warn: true };
       };
     }
     hud.setRace(race);
@@ -525,7 +531,7 @@ async function start() {
           menu.refreshBest(track.def.id);
         }
         // the AI cars, then car-to-car contact (after the timer, so a finish flash wins)
-        race?.stepAI(startLights.holding, FIXED, { damage: settings.get('damage') });
+        race?.stepAI(startLights.holding, FIXED, { damage: settings.get('damage'), resets: aiResets() });
         acc -= FIXED;
       }
       syncCar(dt);
