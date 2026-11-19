@@ -39,6 +39,13 @@ export class Hud {
     };
     this.damageParts = buildDamageCar(document.getElementById('damage-car'));
     this.onCompound = null; // set by main: (compound) => void
+    this.onPick = null; // set by main: (race entry) => void, a car clicked in the timing tower
+    this.watching = null; // the race entry being watched (its tower row is marked)
+    document.getElementById('standings-list').addEventListener('click', (ev) => {
+      const li = ev.target.closest('li[data-i]');
+      const e = li && this.race?.entries[+li.dataset.i];
+      if (e) this.onPick?.(e);
+    });
     this.onWing = null; // set by main: () => void, toggles the wing change
     this.el.wingChange.addEventListener('mousedown', (e) => e.preventDefault());
     this.el.wingChange.addEventListener('click', () => this.onWing?.());
@@ -161,7 +168,8 @@ export class Hud {
       const stops = e.stops ? `${e.stops} stop${e.stops > 1 ? 's' : ''}` : 'no stops';
       const title = ` title="${e.style ? `${e.style.name} driver · ` : ''}${c ? `${c.name.toLowerCase()}s · ` : ''}${stops}"`;
       const pit = gap === 'PIT' ? ' pit' : '';
-      return `<li${title} class="${e.isPlayer ? 'me' : ''}${e.finished ? ' done' : ''}${e.retired ? ' out' : ''}${pit}"><span class="p">${e.position}</span><i style="background:${e.team.ui.primary}"></i><span>${name}</span>${tyre}<span class="gap">${gap}</span></li>`;
+      const watch = e === this.watching ? ' watch' : '';
+      return `<li data-i="${race.entries.indexOf(e)}"${title} class="${e.isPlayer ? 'me' : ''}${e.finished ? ' done' : ''}${e.retired ? ' out' : ''}${pit}${watch}"><span class="p">${e.position}</span><i style="background:${e.team.ui.primary}"></i><span>${name}</span>${tyre}<span class="gap">${gap}</span></li>`;
     });
     document.getElementById('standings-list').innerHTML = rows.join('');
   }

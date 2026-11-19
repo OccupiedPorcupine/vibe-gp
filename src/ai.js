@@ -155,6 +155,7 @@ export function racingLine(P, { gripUse = 1.15, learned = AI_PACE[P.def?.id] } =
     variant(corner = 1, brake = 1) {
       const key = `${corner}|${brake}`;
       if (!variants.has(key)) {
+        if (variants.size > 300) variants.clear(); // the chaos slider makes many; rebuilt as needed
         const arr = new Float64Array(N);
         profile(current.scale, current.brake * brake, arr, corner);
         variants.set(key, { ...line, vlim: arr, vAt: (s) => vAtIn(arr, s) });
@@ -215,6 +216,35 @@ const SOFT_USE = 0.4; // share of a grippier compound's extra grip the AI drives
 // a field's mix of styles, dealt in a shuffled order
 const STYLE_DECK = ['aggressive', 'balanced', 'smooth', 'aggressive', 'balanced', 'rookie', 'balanced', 'smooth', 'aggressive', 'balanced'];
 
+/**
+ * AI chaos (the Settings slider, 0..1): how far apart the drivers race. CHAOS_DEFAULT is the
+ * styles exactly as above; lower narrows them to about 60% (tidier, fewer mistakes), higher
+ * widens them up to 3x: late brakers brake later still, aggressive drivers leave less room
+ * and close up more, mistakes come several times as often, and each driver gets a personal
+ * twist on corner speed, braking and pace. The top end means crashes.
+ */
+export const CHAOS_DEFAULT = 0.4;
+export function chaosSpread(c = CHAOS_DEFAULT) {
+  return c <= CHAOS_DEFAULT ? 0.6 + 0.4 * (c / CHAOS_DEFAULT) : 1 + 2 * ((c - CHAOS_DEFAULT) / (1 - CHAOS_DEFAULT));
+}
+
+/** A style with its differences from a middle-of-the-road driver scaled by spread v; quirk: this driver's own [-1, 1] x3. */
+function spreadStyle(st, v, quirk = [0, 0, 0]) {
+  const dev = (x, mid = 1) => mid + (x - mid) * v;
+  const extra = Math.max(0, v - 1);
+  return {
+    ...st,
+    corner: dev(st.corner) + quirk[0] * 0.012 * extra,
+    brake: Math.max(0.7, dev(st.brake) + quirk[1] * 0.06 * extra),
+    gap: Math.max(0.35, dev(st.gap)),
+    room: st.room * v - 0.15 * extra,
+    pass: st.pass / Math.max(1, v) ** 0.7,
+    mistakes: st.mistakes * v ** 1.3,
+    late: Math.max(0.5, dev(st.late)),
+    wobble: st.wobble * v,
+  };
+}
+
 // --- pit lane ---
 const PIT_DECIDE = 700; // m before the lane leaves the track: the driver decides whether to stop this lap
 const PIT_STOP_DECEL = 3; // m/s² rolling into the box, so it stops on the marks
@@ -274,6 +304,7 @@ function laneGuide(pit) {
 export class AIDriver {
   constructor(entry, line, { pace = 0.95, reaction = 0.25, seed = 1, style = STYLES.balanced } = {}) {
     this.entry = entry;
+    this.baseStyle = style; // the style as dealt; this.style: spread by the chaos setting
     this.style = style;
     this.base = line; // the race's line; this.line: its speed profile for this driver and tyres
     this.line = line.variant ? line.variant(style.corner, style.brake) : line;
@@ -293,7 +324,34 @@ export class AIDriver {
     this.pit = null; // pit stop under way: { phase: 'enter' | 'lane', compound, wing, served }
     this.planLap = null; // the lap the last stop-or-not decision was made on
     this.stintFrom = 0; // race progress (m) when the tyres on the car went on
-    this.tyreBias = (this.rand() - 0.5) * 0.14; // this driver's own idea of how far tyres go
+    this.tyreBias0 = (this.rand() - 0.5) * 0.14; // this driver's own idea of how far tyres go
+    this.tyreBias = this.tyreBias0;
+    this.basePace = pace;
+    this.quirk = [this.rand() * 2 - 1, this.rand() * 2 - 1, this.rand() * 2 - 1]; // corner, brake, pace
+  }
+
+  /**
+   * Take over again after the player has been driving this car: forget plans made before
+   * (a stop under way, a mistake, a recovery) and carry on from where the car is.
+   */
+  resume() {
+    const car = this.entry.physics;
+    this.pit = null;
+    this.planLap = null;
+    this.mistake = null;
+    this.rec = null;
+    this.stuck = 0;
+    this.tries = 0;
+    this.brakeNow = false;
+    const s = car.trackS, lim = this.line.limits(s);
+    this.offset = this.offsetTarget = Math.max(lim.right, Math.min(lim.left, car.lateral)) - this.line.latAt(s);
+  }
+
+  /** Apply the chaos setting (spread v from chaosSpread): style, tyre gambles and pace. */
+  setSpread(v) {
+    this.style = spreadStyle(this.baseStyle, v, this.quirk);
+    this.tyreBias = this.tyreBias0 * v;
+    this.pace = this.basePace * (1 + this.quirk[2] * 0.01 * Math.max(0, v - 1));
   }
 
   /** Controls for this step. field: every entry in the race. */
@@ -327,7 +385,8 @@ export class AIDriver {
     // target speed doesn't take away, so low-grip cars braked too late and slid off.)
     if (this.base.variant) {
       const g = Math.round(this.tyreGrip(car) * 50) / 50;
-      this.line = this.base.variant(st.corner * Math.sqrt(g), st.brake * g);
+      const q = (x, step) => Math.round(x / step) * step;
+      this.line = this.base.variant(q(st.corner * Math.sqrt(g), 0.0025), q(st.brake * g, 0.01));
     }
     // pit stops: decided on the way to the pit entry; then the lane is driven on its own
     if (this.race && this.entry.pitStop?.box) {
@@ -494,6 +553,7 @@ export class AIDriver {
     // --- recovery: stuck against something or facing the wrong way ---
     const heading = P.heading[P.wrap(car.trackIndex < 0 ? 0 : car.trackIndex)];
     const back = Math.abs(Math.atan2(Math.sin(heading - car.yaw), Math.cos(heading - car.yaw))) > 1.8;
+    if (back) this.mistake = null; // spun round: whatever went wrong is over
     if (v < 2 || back) this.stuck += dt;
     else this.stuck = Math.max(0, this.stuck - dt * 2);
     if (this.resets) {
@@ -575,7 +635,7 @@ export class AIDriver {
     let r = this.rand() * w.reduce((a, b) => a + b, 0), i = 0;
     while (i < 2 && (r -= w[i]) > 0) i++;
     let compound = COMPOUND_LIST[i];
-    if (st === STYLES.rookie && this.rand() < 0.25) compound = COMPOUND_LIST[Math.floor(this.rand() * 3)];
+    if (this.baseStyle === STYLES.rookie && this.rand() < 0.25) compound = COMPOUND_LIST[Math.floor(this.rand() * 3)];
     return { compound, wing };
   }
 
@@ -785,6 +845,7 @@ export class AIDriver {
     car.compound = keep.compound; // and the same tyres, as worn as they were
     car.wheels.forEach((w, i) => (w.wear = keep.wear[i]));
     this.offset = this.offsetTarget = 0;
+    this.mistake = null; // or it's put back inside the same mistake and repeats it
     this.pit = null; // a stop under way is off; the next lap decides again
     this.planLap = null;
     this.entry.pitStop?.reset();
@@ -933,7 +994,7 @@ export function teamPace(index, level = 'normal') {
  * in pace order with the player at the back (or `playerSlot`).
  */
 export class Race {
-  constructor(path, playerTeam, playerPhysics, teams, { opponents = 10, laps = 5, level = 'normal', playerSlot = null, seed = (Math.random() * 2 ** 31) | 0 } = {}) {
+  constructor(path, playerTeam, playerPhysics, teams, { opponents = 10, laps = 5, level = 'normal', playerSlot = null, seed = (Math.random() * 2 ** 31) | 0, chaos = CHAOS_DEFAULT } = {}) {
     this.path = path;
     this.laps = laps;
     this.line = racingLine(path);
@@ -993,7 +1054,15 @@ export class Race {
       this.entries.push(e);
     }
     this.finishOrder = [];
+    this.setChaos(chaos);
     this.reset();
+  }
+
+  /** The AI chaos setting (0..1, see chaosSpread): applies at once, mid-race too. */
+  setChaos(c) {
+    this.chaos = c;
+    const v = chaosSpread(c);
+    for (const e of this.entries) if (!e.isPlayer) e.driver.setSpread(v);
   }
 
   get ai() {
@@ -1045,7 +1114,8 @@ export class Race {
 
   /**
    * Step every AI car (the player's car is stepped by the caller first), then car-to-car
-   * contact, progress and positions.
+   * contact, progress and positions. settings.takeover: an AI entry the player is driving
+   * with settings.controls instead of its driver.
    */
   stepAI(holding, dt, settings = {}) {
     this.time += dt;
@@ -1061,8 +1131,9 @@ export class Race {
         continue;
       }
       // finished: cruise round at a gentle pace
-      let ctl = e.driver.drive(this.entries, holding ? 0 : this.sinceGreen, dt);
-      if (e.finished) {
+      const human = e === settings.takeover;
+      let ctl = human ? { ...settings.controls } : e.driver.drive(this.entries, holding ? 0 : this.sinceGreen, dt);
+      if (e.finished && !human) {
         ctl.throttle = p.speed < 35 ? ctl.throttle : 0;
       }
       // in its box: the crew holds the car until the stop is done

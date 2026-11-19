@@ -95,6 +95,9 @@ small { color: #9aa3b5; font-size: 11px; letter-spacing: 0.14em; }
 .setting:hover { background: rgba(255, 255, 255, 0.09); }
 .setting b { display: block; font-size: 14px; }
 .setting small { display: block; margin-top: 2px; letter-spacing: 0.02em; }
+.setting.slider { flex-direction: column; align-items: stretch; cursor: default; }
+.setting.slider em { font-style: normal; color: var(--team, #e10600); margin-left: 4px; }
+.setting.slider input { width: 100%; margin: 4px 0 0; accent-color: var(--team, #e10600); cursor: pointer; }
 .switch {
   flex: none;
   position: relative;
@@ -189,6 +192,11 @@ small { color: #9aa3b5; font-size: 11px; letter-spacing: 0.14em; }
 .standings li.out { opacity: 0.45; }
 .standings li.out .gap { color: #ff5a3c; }
 .standings li.pit .gap { color: #3d7bff; font-weight: 700; }
+/* free cam: click a car in the tower to watch it (the watched one is outlined) */
+.standings { pointer-events: auto; }
+.standings li { cursor: pointer; }
+.standings li:hover { background: rgba(255, 255, 255, 0.08); }
+.standings li.watch { box-shadow: inset 0 0 0 1.5px #3d7bff; background: rgba(61, 123, 255, 0.18); }
 .timing .row.pos span:last-child { font-weight: 700; }
 .timing .row[hidden] { display: none; }
 
