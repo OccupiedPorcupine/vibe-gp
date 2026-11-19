@@ -5,7 +5,7 @@ import { Car, MIRROR_LAYER, PARKED } from './car.js';
 import { CarPhysics } from './physics.js';
 import { Input } from './input.js';
 import { bindTouch } from './touch.js';
-import { MOBILE } from './quality.js';
+import { MOBILE, TOUCH, GRAPHICS, AdaptiveResolution } from './quality.js';
 import { CameraRig } from './camera.js';
 import { LapTimer, StartLights, formatTime } from './race.js';
 import { Hud } from './hud.js';
@@ -85,8 +85,12 @@ function saveBest(id, t) {
 
 async function start() {
   const renderer = new THREE.WebGPURenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  // Graphics (Settings): High draws at the screen's resolution (up to 2x); Auto does too but
+  // steps the resolution down while the frame rate is low; Low starts at 1x and adapts as well
+  const maxRatio = Math.min(devicePixelRatio, GRAPHICS === 'low' ? 1 : 2);
+  renderer.setPixelRatio(maxRatio);
   renderer.setSize(innerWidth, innerHeight);
+  const adaptive = GRAPHICS === 'high' ? null : new AdaptiveResolution(renderer, maxRatio, GRAPHICS === 'low' ? 0.5 : 0.6);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
   renderer.shadowMap.enabled = true;
@@ -137,7 +141,7 @@ async function start() {
 
   const sun = new THREE.DirectionalLight(0xfff2dd, 2.2);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.setScalar(MOBILE ? 1024 : 2048);
   const sc = sun.shadow.camera;
   sc.left = -40; sc.right = 40; sc.top = 40; sc.bottom = -40; sc.near = 1; sc.far = 300;
   sun.shadow.bias = -0.0005;
@@ -297,7 +301,7 @@ async function start() {
     physics.abs = settings.get('abs');
     physics.damageOn = settings.get('damage');
   };
-  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS', ai: 'AI OPPONENTS', aiLevel: 'AI DIFFICULTY', laps: 'RACE LAPS', noResets: 'NO RESETS', chaos: 'AI CHAOS' };
+  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS', ai: 'AI OPPONENTS', aiLevel: 'AI DIFFICULTY', laps: 'RACE LAPS', noResets: 'NO RESETS', chaos: 'AI CHAOS', graphics: 'GRAPHICS' };
   settings.onChange = (id, on) => {
     if (id === 'music') sound.setMusic(on);
     if (id === 'sound') sound.setSfx(on);
@@ -315,6 +319,8 @@ async function start() {
     // a new field (or none) means a fresh start from the grid
     if (id === 'ai' || id === 'aiLevel' || id === 'laps') resetCar();
     if (id === 'chaos') race?.setChaos(raceOptions().chaos); // live, mid-race too
+    // the graphics profile is read as the game starts (the scenery is built for it)
+    if (id === 'graphics') setTimeout(() => location.reload(), 400);
     const value = on === true ? 'ON' : on === false ? 'OFF' : String(on).toUpperCase();
     timer.flash = { text: `${SETTING_NAMES[id]} ${value}`, until: timer.time + 1.5 };
   };
@@ -323,7 +329,7 @@ async function start() {
   // ?chaos=0..100 and ?resets=0 (no-resets mode) override Settings ----
   const query = new URLSearchParams(location.search);
   function raceOptions() {
-    const opponents = query.has('ai') ? Math.max(0, Math.min(10, +query.get('ai') || 0)) : settings.get('ai') ? (MOBILE ? 5 : 10) : 0;
+    const opponents = query.has('ai') ? Math.max(0, Math.min(10, +query.get('ai') || 0)) : settings.get('ai') ? (TOUCH && MOBILE ? 5 : 10) : 0;
     const laps = Math.max(1, +(query.get('laps') ?? settings.get('laps')) || 5);
     const level = query.get('difficulty') ?? settings.get('aiLevel');
     const chaos = Math.max(0, Math.min(100, +(query.get('chaos') ?? settings.get('chaos')) || 0)) / 100;
@@ -803,6 +809,7 @@ async function start() {
       director.render(renderer, scene, carOf);
       sun.shadow.autoUpdate = true;
     }
+    adaptive?.update(paused || menu.visible ? 0 : dt);
     renderer.render(scene, camera);
     // mirrors show up next frame; skip them when the view is too far away to see them.
     // The shadow map was just drawn for this frame, so reuse it instead of redrawing per mirror.
