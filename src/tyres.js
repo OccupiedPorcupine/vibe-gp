@@ -21,7 +21,9 @@
 //  - Contamination: driving on grass leaves dirt and clippings on the tread,
 //    costing grip until it scrubs off on clean asphalt.
 //  - Compounds and wear: soft / medium / hard trade peak grip and a cooler working
-//    window against how fast the tread wears away (see COMPOUNDS).
+//    window against how fast the tread wears away (see COMPOUNDS). A wearing tyre
+//    loses grip a little at a time, then falls off a cliff near the end of its life
+//    (wearGrip), and the thinner tread heats up quicker, so worn tyres overheat.
 
 /** Normalised Magic Formula: x is slip / peak slip, so the peak is at x = 1. */
 export class SlipCurve {
@@ -192,7 +194,10 @@ export const TYRE = {
   coolGrass: 60, // W/°C extra conduction into cool grass
   dirtGripLoss: 0.08, // grip lost with fully dirty tyres
   dirtCleanLength: 120, // m of clean asphalt to scrub most of it off
-  wearGripLoss: 0.12, // grip lost with a fully worn tread
+  wearGripLoss: 0.1, // grip lost steadily as the tread wears down (all of it at wear 1)
+  cliff: [0.72, 1], // wear over which the rest goes: the tyre "falls off the cliff"
+  cliffLoss: 0.22, // grip lost over the cliff
+  wornHeat: 0.45, // share of the tread's heat capacity gone with it at wear 1 (worn tyres run hot)
   wearSlide: 2.5, // extra wear per unit of slide past 80% of the limit
 };
 
@@ -202,13 +207,12 @@ export const TYRE = {
  * the tread used per km of clean driving (sliding wears it faster).
  */
 export const COMPOUNDS = {
-  soft: { id: 'soft', name: 'SOFT', letter: 'S', hex: 0xe8202a, css: '#e8202a', grip: 1.04, tOpt: 96, wear: 0.05 },
+  soft: { id: 'soft', name: 'SOFT', letter: 'S', hex: 0xe8202a, css: '#e8202a', grip: 1.04, tOpt: 96, wear: 0.045 },
   medium: { id: 'medium', name: 'MEDIUM', letter: 'M', hex: 0xf5c400, css: '#f5c400', grip: 1.0, tOpt: 105, wear: 0.028 },
-  hard: { id: 'hard', name: 'HARD', letter: 'H', hex: 0xeeeeee, css: '#eeeeee', grip: 0.965, tOpt: 112, wear: 0.016 },
+  hard: { id: 'hard', name: 'HARD', letter: 'H', hex: 0xeeeeee, css: '#eeeeee', grip: 0.965, tOpt: 112, wear: 0.018 },
 };
 export const COMPOUND_LIST = [COMPOUNDS.soft, COMPOUNDS.medium, COMPOUNDS.hard];
 
-/** Grip multiplier from tread temperature (tOpt: the compound's window centre). */
 /**
  * Rolling-resistance coefficient on `surface` for a contact patch moving at `v` m/s (any
  * sign). Constant except where a surface sets crrSlow (gravel): from crrSlow at or below
@@ -221,6 +225,17 @@ export function rollingCoef(surface, v) {
   return surface.crrSlow + (surface.crr - surface.crrSlow) * t * t * (3 - 2 * t);
 }
 
+/**
+ * Grip multiplier from tread wear (0 new, 1 worn out): a steady fade, then the cliff. At
+ * 50% about 5% gone, at 72% about 7%, and from there it drops away to about 32% at 100%.
+ */
+export function wearGrip(wear) {
+  const [a, b] = TYRE.cliff;
+  const t = Math.min(1, Math.max(0, (wear - a) / (b - a)));
+  return 1 - TYRE.wearGripLoss * wear - TYRE.cliffLoss * t * t * (3 - 2 * t);
+}
+
+/** Grip multiplier from tread temperature (tOpt: the compound's window centre). */
 export function tempGrip(T, tOpt = TYRE.tOpt) {
   const d = T - tOpt;
   const w = d < 0 ? TYRE.coldWidth : TYRE.hotWidth;

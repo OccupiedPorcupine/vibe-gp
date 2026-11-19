@@ -26,7 +26,7 @@
 // (toe-out pulls the car, camber costs grip); damaged tyres grip less and drag.
 import { CAR_DIMS } from './car.js';
 import { KERB_WIDTH, WALL_THICKNESS, PIT } from './trackPath.js';
-import { SURFACES, TYRE, COMPOUNDS, tyreForce, tempGrip, peakForce, rollingCoef } from './tyres.js';
+import { SURFACES, TYRE, COMPOUNDS, tyreForce, tempGrip, wearGrip, peakForce, rollingCoef } from './tyres.js';
 import { CarDamage, DAMAGE } from './damage.js';
 
 const G = 9.81;
@@ -175,6 +175,7 @@ export class CarPhysics {
       dist: 0, // rolled distance, drives the kerb-ridge phase
     }));
     this.compound ??= COMPOUNDS.medium; // a reset keeps the compound, on a fresh set
+    this.wearScale ??= 1; // tyre wear rate multiplier (a race sets it from the race distance)
     this.damage ??= new CarDamage();
     this.damage.reset(); // a reset is a fresh car
     this.damageOn ??= true; // tools (track-check's autopilot) can turn damage off
@@ -336,7 +337,7 @@ export class CarPhysics {
       w.damage = dmg.tyre[i];
       w.susp = dmg.suspension[i];
       w.toe = Math.sign(w.y) * DAMAGE.suspToe * w.susp; // bent arm: the wheel toes out
-      w.grip = c.grip * tempGrip(w.temp, c.tOpt) * (1 - TYRE.dirtGripLoss * w.dirt) * (1 - TYRE.wearGripLoss * w.wear)
+      w.grip = c.grip * tempGrip(w.temp, c.tOpt) * (1 - TYRE.dirtGripLoss * w.dirt) * wearGrip(w.wear)
         * (1 - DAMAGE.tyreGripLoss * w.damage) * (1 - DAMAGE.suspGripLoss * w.susp) * (w.front ? 1 : P.rearGrip);
       const peak = peakForce(S, fz) * w.grip;
       const used = peak > 0 ? Math.min(1, Math.abs(w.fy || 0) / peak) : 1;
@@ -548,12 +549,12 @@ export class CarPhysics {
       const heat = TYRE.slipHeat * (w.slipPower || 0) + TYRE.flexHeat * w.load * (w.rollSpeed || 0);
       let cool = (TYRE.coolBase + TYRE.coolSpeed * v) * (w.temp - TYRE.tAmbient);
       if (w.surface === SURFACES.grass || w.surface === SURFACES.gravel) cool += TYRE.coolGrass * (w.temp - TYRE.tAmbient);
-      w.temp += ((heat - cool) / TYRE.heatCapacity) * dt;
+      w.temp += ((heat - cool) / (TYRE.heatCapacity * (1 - TYRE.wornHeat * w.wear))) * dt;
       const d = (w.rollSpeed || 0) * dt;
       if (w.surface.dirt > 0) w.dirt += (1 - w.dirt) * Math.min(1, w.surface.dirt * d);
       else w.dirt *= Math.exp(-d / TYRE.dirtCleanLength);
       const scrub = 1 + TYRE.wearSlide * Math.max(0, w.slide - 0.8);
-      w.wear = Math.min(1, w.wear + (d / 1000) * this.compound.wear * scrub);
+      w.wear = Math.min(1, w.wear + (d / 1000) * this.compound.wear * this.wearScale * scrub);
     }
   }
 

@@ -188,6 +188,7 @@ small { color: #9aa3b5; font-size: 11px; letter-spacing: 0.14em; }
 .standings li.done .gap { color: #7dff9a; }
 .standings li.out { opacity: 0.45; }
 .standings li.out .gap { color: #ff5a3c; }
+.standings li.pit .gap { color: #3d7bff; font-weight: 700; }
 .timing .row.pos span:last-child { font-weight: 700; }
 .timing .row[hidden] { display: none; }
 

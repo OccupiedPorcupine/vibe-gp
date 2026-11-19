@@ -3,7 +3,8 @@
 //   node scripts/ai-check.mjs <trackId> [laps] [opponents] [level: easy|normal|hard|expert]
 //   NORESETS=1 node scripts/ai-check.mjs ...   (no-resets mode: stuck cars recover or retire)
 //
-// Prints each car's best lap, finishing order, wall contacts, off-track time and respawns.
+// Prints each car's best lap, finishing order, wall contacts, off-track time, respawns and
+// its tyres: the compound of each stint (S-M: started on softs, one stop for mediums).
 // logos.js builds Path2D objects at import time (browser only): stub it for Node
 globalThis.location ??= { search: "" };
 globalThis.matchMedia ??= () => ({ matches: false, addEventListener() {} });
@@ -35,6 +36,9 @@ AIDriver.prototype.respawn = function (field) {
   stats.get(this.entry).respawn++;
   return origRespawn.call(this, field);
 };
+const stints = new Map(race.entries.map((e) => [e, [e.physics.compound.letter]]));
+race.onPit = (e) => stints.get(e).push(`${e.physics.compound.letter}@${(e.progress / P.length).toFixed(1)}`);
+console.log(`tyre wear x${race.wearScale.toFixed(2)} for the race distance`);
 const dt = 1 / 120;
 let hold = 3.6;
 const tSim = performance.now();
@@ -63,5 +67,5 @@ console.log(`car-to-car contacts: ${CONTACTS.touches} (hard, > 5 m/s: ${CONTACTS
 console.log(`simulated ${(race.time).toFixed(0)} s in ${(ms / 1000).toFixed(1)} s (${((ms / frames) * 1000 / race.entries.length).toFixed(0)} µs per car-step)`);
 for (const e of race.order) {
   const s = stats.get(e);
-  console.log(`P${String(e.position).padEnd(3)} ${e.team.name.padEnd(13)} grid ${String(e.slot + 1).padStart(2)}  ${e.finished ? formatTime(e.finishTime) : e.retired ? 'RETIRED  ' : 'DNF      '}  best ${s.best < Infinity ? formatTime(s.best) : '--'}  pace ${e.driver.pace.toFixed(3)} ${(e.style?.name ?? '').padEnd(10)} ${e.physics.compound.letter}  wall ${String(s.wall).padStart(4)}  off ${(s.off * dt).toFixed(1).padStart(5)} s  respawns ${s.respawn}  mistakes ${e.driver?.mistakes ?? 0}`);
+  console.log(`P${String(e.position).padEnd(3)} ${e.team.name.padEnd(13)} grid ${String(e.slot + 1).padStart(2)}  ${e.finished ? formatTime(e.finishTime) : e.retired ? 'RETIRED  ' : 'DNF      '}  best ${s.best < Infinity ? formatTime(s.best) : '--'}  pace ${e.driver.pace.toFixed(3)} ${(e.style?.name ?? '').padEnd(10)} ${stints.get(e).join('-').padEnd(16)} wear ${Math.round(Math.max(...e.physics.wheels.map((w) => w.wear)) * 100)}%  wall ${String(s.wall).padStart(4)}  off ${(s.off * dt).toFixed(1).padStart(5)} s  respawns ${s.respawn}  mistakes ${e.driver?.mistakes ?? 0}${e.driver?.missedBox ? `  MISSED BOX ${e.driver.missedBox}` : ''}`);
 }

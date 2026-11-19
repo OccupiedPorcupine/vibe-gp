@@ -13,10 +13,16 @@
 //   late it brakes, how fast it takes corners, the gaps it leaves, how keen it is to pass,
 //   how often it makes a mistake and how it looks after its tyres. Each starts on its own
 //   tyre compound and drives to the grip it has (softs quick early, fading as they wear).
+// - Pit stops: each AI driver watches its tyres. Once they won't last to the flag and
+//   won't last another lap, it picks the compound for the rest of the race, pulls into
+//   the pit lane, stops in its team's box for a new set (its crew does the stop) and
+//   rejoins. A badly damaged front wing brings it in for a new one too.
 // - Race: the whole field (player + AI): grid, progress along the lap, positions, laps and
 //   the chequered flag.
 import { CarPhysics, PARAMS } from './physics.js';
-import { TYRE, COMPOUNDS, tempGrip } from './tyres.js';
+import { TYRE, COMPOUNDS, COMPOUND_LIST, tempGrip, wearGrip } from './tyres.js';
+import { PIT, angleDiff } from './trackPath.js';
+import { PitStop } from './pitStop.js';
 import { AI_PACE } from './tracks/aipace.js';
 
 const LINE_MARGIN = 1.5; // m between the racing line and the edge of the asphalt (car half width + a bit)
@@ -196,17 +202,73 @@ function lapDelta(s1, s0, L) {
  * are a snap of oversteer on the way out rather than running wide (see drive); late: how
  * close it leaves an emergency stop; tyreCare: how much of its tyres' wear it allows for (1:
  * all of it; less: it keeps pushing on worn tyres and slides); wobble: pace variation;
- * tyres: chances of starting on soft / medium / hard.
+ * tyres: chances of starting on soft / medium / hard; pitWear: tyre wear it pits at, and
+ * endWear: how worn it will let them get when that gets it to the flag without a stop.
  */
 export const STYLES = {
-  aggressive: { name: 'Aggressive', corner: 1.015, brake: 1.1, gap: 0.65, room: -0.25, pass: 0.6, mistakes: 0.3, snap: 0.4, tyreCare: 0.4, wobble: 1.2, late: 0.85, tyres: [0.55, 0.4, 0.05] },
-  balanced: { name: 'Balanced', corner: 1, brake: 1, gap: 1, room: 0, pass: 1.5, mistakes: 0.07, snap: 0.25, tyreCare: 0.8, wobble: 1, late: 1, tyres: [0.3, 0.55, 0.15] },
-  smooth: { name: 'Smooth', corner: 0.99, brake: 0.95, gap: 1.3, room: 0.3, pass: 2.5, mistakes: 0.02, snap: 0.2, tyreCare: 1, wobble: 0.6, late: 1.1, tyres: [0.15, 0.55, 0.3] },
-  rookie: { name: 'Rookie', corner: 1.005, brake: 1.06, gap: 0.85, room: 0, pass: 1, mistakes: 0.45, snap: 0.5, tyreCare: 0.5, wobble: 2.5, late: 0.95, tyres: [0.4, 0.5, 0.1] },
+  aggressive: { name: 'Aggressive', corner: 1.015, brake: 1.1, gap: 0.65, room: -0.25, pass: 0.6, mistakes: 0.3, snap: 0.4, tyreCare: 0.4, wobble: 1.2, late: 0.85, tyres: [0.55, 0.4, 0.05], pitWear: 0.8, endWear: 0.92 },
+  balanced: { name: 'Balanced', corner: 1, brake: 1, gap: 1, room: 0, pass: 1.5, mistakes: 0.07, snap: 0.25, tyreCare: 0.8, wobble: 1, late: 1, tyres: [0.3, 0.55, 0.15], pitWear: 0.72, endWear: 0.82 },
+  smooth: { name: 'Smooth', corner: 0.99, brake: 0.95, gap: 1.3, room: 0.3, pass: 2.5, mistakes: 0.02, snap: 0.2, tyreCare: 1, wobble: 0.6, late: 1.1, tyres: [0.15, 0.55, 0.3], pitWear: 0.66, endWear: 0.76 },
+  rookie: { name: 'Rookie', corner: 1.005, brake: 1.06, gap: 0.85, room: 0, pass: 1, mistakes: 0.45, snap: 0.5, tyreCare: 0.5, wobble: 2.5, late: 0.95, tyres: [0.4, 0.5, 0.1], pitWear: 0.76, endWear: 0.9 },
 };
 const SOFT_USE = 0.4; // share of a grippier compound's extra grip the AI drives to (see tyreGrip)
 // a field's mix of styles, dealt in a shuffled order
 const STYLE_DECK = ['aggressive', 'balanced', 'smooth', 'aggressive', 'balanced', 'rookie', 'balanced', 'smooth', 'aggressive', 'balanced'];
+
+// --- pit lane ---
+const PIT_DECIDE = 700; // m before the lane leaves the track: the driver decides whether to stop this lap
+const PIT_STOP_DECEL = 3; // m/s² rolling into the box, so it stops on the marks
+const PIT_IN = 2.5; // m inside the track edge where the lane counts as having left the track
+const MEDIUM_LIFE = 0.6; // share of the race distance a set of mediums lasts (see Race)
+const PIT_SCRUB = 1.2; // tyre wear in racing against the compound's clean-driving rate (sliding)
+const smooth = (a, b, x) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+/** Braking a pit-bound car can count on at speed v (with the downforce), m/s². */
+const pitDecel = (v) => 0.7 * (PARAMS.brakeDecel + TYRE.muLongScale * PARAMS.downforceGrip * v * v);
+
+const lanes = new WeakMap();
+/**
+ * How to drive a pit lane (cached per lane): v, the speed along it (its bends at
+ * low-speed grip, under the limiter in the limit zone, braking worked backwards); off,
+ * the lane distance where it leaves the track (before that it runs over the asphalt from
+ * the middle of the track); and approach[m]: the speed to be at m metres of track before
+ * that point.
+ */
+function laneGuide(pit) {
+  let g = lanes.get(pit);
+  if (g) return g;
+  const N = pit.N, hw = pit.main.hw;
+  const v = new Float64Array(N);
+  const grip = (u) => (PARAMS.baseGrip + PARAMS.downforceGrip * u * u) * 0.8;
+  for (let j = 0; j < N; j++) {
+    const a = Math.max(0, j - 4), b = Math.min(N - 1, j + 4);
+    const k = Math.max(Math.abs(angleDiff(pit.heading[b], pit.heading[a])) / ((b - a) * pit.ds), 1e-5);
+    let u = 10;
+    for (let n = 0; n < 20; n++) u = Math.sqrt(grip(u) / k);
+    v[j] = Math.min(u, 90);
+    const s = j * pit.ds;
+    if (s >= pit.limitStart - 3 && s <= pit.limitEnd) v[j] = Math.min(v[j], PIT.speedLimit - 0.6);
+  }
+  for (let j = N - 2; j >= 0; j--) v[j] = Math.min(v[j], Math.sqrt(v[j + 1] ** 2 + 2 * pitDecel(v[j + 1]) * pit.ds));
+  let jOff = 0;
+  while (jOff < N - 1 && Math.abs(pit.mainLat[jOff]) < hw - PIT_IN) jOff++;
+  const approach = new Float64Array(1200);
+  approach[0] = v[jOff];
+  for (let m = 1; m < approach.length; m++) approach[m] = Math.sqrt(approach[m - 1] ** 2 + 2 * pitDecel(approach[m - 1]));
+  const L = pit.main.length;
+  g = {
+    off: jOff * pit.ds,
+    offLap: ((pit.mainS[jOff] % L) + L) % L,
+    offLat: pit.side * (hw - PIT_IN), // where on the track to be when the lane turns off
+    vAt: (s) => v[Math.min(N - 1, Math.max(0, Math.round(s / pit.ds)))],
+    approach: (m) => approach[Math.min(approach.length - 1, Math.max(0, Math.round(m)))],
+  };
+  lanes.set(pit, g);
+  return g;
+}
 
 /** Computer driver for one car. */
 export class AIDriver {
@@ -227,6 +289,11 @@ export class AIDriver {
     this.rand = mulberry32(seed);
     this.wobble = 0; // slow-varying small pace variation, so they don't drive like trains
     this.wobbleT = 0;
+    this.race = null; // the Race (set by it): what pit stop plans are made against
+    this.pit = null; // pit stop under way: { phase: 'enter' | 'lane', compound, wing, served }
+    this.planLap = null; // the lap the last stop-or-not decision was made on
+    this.stintFrom = 0; // race progress (m) when the tyres on the car went on
+    this.tyreBias = (this.rand() - 0.5) * 0.14; // this driver's own idea of how far tyres go
   }
 
   /** Controls for this step. field: every entry in the race. */
@@ -262,6 +329,14 @@ export class AIDriver {
       const g = Math.round(this.tyreGrip(car) * 50) / 50;
       this.line = this.base.variant(st.corner * Math.sqrt(g), st.brake * g);
     }
+    // pit stops: decided on the way to the pit entry; then the lane is driven on its own
+    if (this.race && this.entry.pitStop?.box) {
+      if (!this.pit && !this.entry.finished) this.considerPit(s, sinceGreen);
+      if (this.pit) {
+        const c = this.pitDrive(field, dt);
+        if (c) return c;
+      }
+    }
     // the target a little ahead: the brake pedal takes a moment to come on
     let vt = this.line.vAt(s + 3 + v * 0.08) * (this.pace + this.wobble);
     // mistakes: now and then, heading into a braking zone, the driver gets the corner wrong.
@@ -271,7 +346,7 @@ export class AIDriver {
     // rear steps out, sometimes all the way round.
     if (this.mistake) {
       if (lapDelta(s, this.mistake.from, L) > this.mistake.len) this.mistake = null;
-    } else if (v > 30 && sinceGreen > 10 && this.line.vAt(s + 30 + v * 0.6) < v - 12) {
+    } else if (v > 30 && sinceGreen > 10 && !this.pit && this.line.vAt(s + 30 + v * 0.6) < v - 12) {
       // about a third of a lap is braking zones, hence the 3
       if (this.rand() < st.mistakes * 3 * (v * dt) / 1000) {
         // from here through the braking zone to the slowest point of the corner
@@ -454,6 +529,156 @@ export class AIDriver {
   }
 
   /**
+   * Once a lap, PIT_DECIDE m before the pit lane turns off the track: stop this time? Yes
+   * if the tyres won't make the flag (as worn as this driver lets them get) and won't last
+   * another lap before they're past the wear it pits at; or for a new front wing.
+   */
+  considerPit(s, sinceGreen) {
+    const e = this.entry, car = e.physics, race = this.race;
+    const g = laneGuide(car.track.pit);
+    const dOff = lapDelta(g.offLap, s, car.track.length);
+    if (dOff > PIT_DECIDE || dOff < PIT_DECIDE - 250 || this.planLap === e.lap) return;
+    this.planLap = e.lap;
+    if (sinceGreen < 15 || race.leaderDone || e.retired) return;
+    const plan = this.pitPlan(dOff);
+    if (!plan) return;
+    this.pit = { phase: 'enter', ...plan, served: false };
+    e.pitStop.nextCompound = plan.compound;
+    e.pitStop.nextWing = plan.wing;
+  }
+
+  /** { compound, wing } for a stop this lap, or null to stay out. dOff: m to the pit lane. */
+  pitPlan(dOff) {
+    const e = this.entry, car = e.physics, st = this.style, L = car.track.length;
+    const left = this.race.laps * L - e.progress - dOff; // m from the stop to the flag
+    if (left < 0.4 * L) return null; // nearly there: bring it home
+    let wear = 0;
+    for (const w of car.wheels) wear = Math.max(wear, w.wear);
+    // wear per metre on this set: as measured once it has done a few km, else a guess
+    const clean = (car.compound.wear * car.wearScale) / 1000;
+    const run = e.progress - this.stintFrom;
+    const rate = run > 1500 ? Math.max(clean, wear / run) : clean * PIT_SCRUB;
+    const wing = car.damage.wing[0] + car.damage.wing[1] > 0.6 && left > L;
+    const pitWear = st.pitWear + this.tyreBias, endWear = st.endWear + this.tyreBias;
+    const tyres = wear + rate * (dOff + left) > endWear && wear + rate * (dOff + L) > pitWear;
+    if (!tyres && !wing) return null;
+    // the compound for the rest of the race: one that needs the fewest stops from here
+    // (wear rates in proportion to the compounds'), chosen between those by the style's
+    // taste in tyres. A rookie sometimes gets it wrong.
+    const per = rate / car.compound.wear;
+    const stops = (c) => {
+      const need = per * c.wear * left;
+      return need <= endWear ? 0 : Math.ceil(need / pitWear) - 1;
+    };
+    const fewest = Math.min(...COMPOUND_LIST.map(stops));
+    const w = COMPOUND_LIST.map((c, i) => (stops(c) === fewest ? st.tyres[i] + 0.05 : 0));
+    let r = this.rand() * w.reduce((a, b) => a + b, 0), i = 0;
+    while (i < 2 && (r -= w[i]) > 0) i++;
+    let compound = COMPOUND_LIST[i];
+    if (st === STYLES.rookie && this.rand() < 0.25) compound = COMPOUND_LIST[Math.floor(this.rand() * 3)];
+    return { compound, wing };
+  }
+
+  /**
+   * Drive a pit stop: across to the pit side and slow for the lane, along the lane under the
+   * limiter, into the box and stopped on the marks (the crew holds it), out again and back
+   * onto the track. Returns this step's controls, or null once back on the track (or still
+   * racing towards the lane).
+   */
+  pitDrive(field, dt) {
+    const e = this.entry, car = e.physics, P = car.track, pit = P.pit, ps = e.pitStop, pt = this.pit;
+    const g = laneGuide(pit), L = P.length;
+    const s = car.trackS, v = Math.max(0, car.speed);
+    const lineLat = this.line.latAt(s);
+    const ahead = (d, opV) => (d > 8 ? Math.sqrt(opV ** 2 + 2 * 4 * (d - 8)) : Math.max(0, opV - 2));
+    let tgt, vt, look, stopping = false;
+    if (pt.phase === 'enter') {
+      const dOff = lapDelta(g.offLap, s, L);
+      if (dOff <= 0 || car.onPitLane) pt.phase = 'lane';
+      else {
+        const run = 120 + v * 2.5; // race on until this far out, then cross over and brake
+        if (dOff > run) return null;
+        const latAt = (d) => {
+          const k = Math.min(1, Math.max(0, (run - d) / (run - 40)));
+          const l = this.line.latAt(s + (dOff - d));
+          return l + (g.offLat - l) * k * k * (3 - 2 * k);
+        };
+        look = 7 + v * 0.28;
+        tgt = look < dOff ? P.poseAt(s + look, latAt(dOff - look)) : pit.poseAt(g.off + look - dOff, 0);
+        vt = Math.min(this.line.vAt(s + 3 + v * 0.08) * this.pace, g.approach(dOff - 3 - v * 0.08));
+        // cars ahead in the way: don't run into them
+        for (const o of field) {
+          if (o === e) continue;
+          const d = lapDelta(o.physics.trackS, s, L);
+          if (d > 3 && d < 70 && Math.abs(o.physics.lateral - latAt(Math.max(0, dOff - d))) < 2.6) vt = Math.min(vt, ahead(d, Math.max(0, o.physics.speed)));
+        }
+      }
+    }
+    if (pt.phase === 'lane') {
+      const sl = car.pitS;
+      // back out on the track at the far end: race from here, merging onto the line gently
+      if (sl >= pit.length - 3 || (sl > pit.limitEnd && !car.onPitLane && Math.abs(car.lateral) < P.hw)) {
+        this.pit = null;
+        const { left, right } = this.line.limits(s);
+        this.offset = this.offsetTarget = Math.max(right, Math.min(left, car.lateral)) - lineLat;
+        return null;
+      }
+      const box = ps.box;
+      if (ps.state === 'service') return { steer: 0, throttle: 0, brake: 1 };
+      if (!pt.served && (ps.state === 'done' || sl > box.s + 2.5)) {
+        pt.served = true; // stopped and serviced (or overshot the box: no stop this time)
+        if (ps.state === 'done') this.stintFrom = e.progress;
+        else this.missedBox = (this.missedBox ?? 0) + 1;
+      }
+      const latAt = (x) => box.lat * (pt.served ? 1 - smooth(box.s + 4, box.s + 40, x) : smooth(box.s - 50, box.s - 12, x));
+      look = 4 + v * 0.3;
+      const a = sl + look;
+      tgt = a <= pit.length ? pit.poseAt(a, latAt(a)) : P.poseAt(pit.exitS + a - pit.length, Math.max(-P.hw + 2, Math.min(P.hw - 2, pit.mainLat[pit.N - 1])));
+      vt = g.vAt(sl + 2 + v * 0.08);
+      const dB = box.s - sl;
+      if (!pt.served) {
+        vt = Math.min(vt, Math.sqrt(2 * PIT_STOP_DECEL * Math.max(0, dB - 0.15)));
+        stopping = dB < 25;
+      }
+      // others in the lane: follow the one ahead, and don't pull out of the box in front of
+      // one coming down the fast lane
+      const me = pit.query(car.position.x, car.position.z, car.pitIndex);
+      for (const o of field) {
+        const op = o.physics;
+        if (o === e || !op.onPitLane) continue;
+        const q = pit.query(op.position.x, op.position.z, op.pitIndex);
+        const d = q.s - sl;
+        if (d > 0 && d < 45 && Math.abs(q.lateral - latAt(q.s)) < 2.6) vt = Math.min(vt, ahead(d, Math.max(0, op.speed)));
+        if (pt.served && dB > -8 && d < 0 && d > -45 && op.speed > 4 && Math.abs(q.lateral) < PIT.hw && Math.abs(me.lateral) > PIT.hw - 1) {
+          vt = 0;
+          stopping = true;
+        }
+      }
+    }
+    const aim = Math.atan2(tgt.x - car.position.x, tgt.z - car.position.z);
+    const err = Math.atan2(Math.sin(aim - car.yaw), Math.cos(aim - car.yaw));
+    // stuck (not just stopped where it means to be)
+    if (v < 2 && !stopping && ps.state !== 'done') this.stuck += dt;
+    else this.stuck = Math.max(0, this.stuck - dt * 2);
+    if (this.resets && this.stuck > 5) {
+      this.stuck = 0;
+      this.respawn(field);
+      return { steer: 0, throttle: 0, brake: 0 };
+    }
+    if (!this.resets) {
+      const r = this.recover(err, false, dt);
+      if (r) return r;
+    }
+    // stopped and meaning to stay stopped: hold it (the brake pedal at a standstill reverses)
+    if (vt < 0.3 && Math.abs(car.speed) < 0.5) return { steer: 0, throttle: 0, brake: 0, hold: true };
+    return {
+      steer: Math.max(-1, Math.min(1, err * 3.5)),
+      throttle: v < vt ? 1 : 0,
+      brake: vt < 0.3 ? 1 : v > vt + 0.3 ? Math.min(1, (v - vt) / 1.5) : 0,
+    };
+  }
+
+  /**
    * The tyres' grip against the mediums the profile was learned on: the compound's, less
    * what the wear has cost as far as this driver allows for it.
    */
@@ -473,7 +698,7 @@ export class AIDriver {
     // more grip than a medium: only some of it is used (all of it made the softs runaway
     // leaders, and traffic is where the extra speed hurts)
     if (warm * c.grip > 1) warm = (1 + (warm * c.grip - 1) * SOFT_USE) / c.grip;
-    return c.grip * warm * (1 - TYRE.wearGripLoss * wear * this.style.tyreCare);
+    return c.grip * warm * (1 - (1 - wearGrip(wear)) * this.style.tyreCare);
   }
 
   /**
@@ -555,10 +780,14 @@ export class AIDriver {
     }
     const pose = P.poseAt(s, this.line.latAt(s));
     this.entry.respawned(s); // before the reset, which forgets where the car was
-    const keep = { compound: car.compound };
+    const keep = { compound: car.compound, wear: car.wheels.map((w) => w.wear) };
     car.reset(pose);
-    car.compound = keep.compound;
+    car.compound = keep.compound; // and the same tyres, as worn as they were
+    car.wheels.forEach((w, i) => (w.wear = keep.wear[i]));
     this.offset = this.offsetTarget = 0;
+    this.pit = null; // a stop under way is off; the next lap decides again
+    this.planLap = null;
+    this.entry.pitStop?.reset();
   }
 }
 
@@ -708,6 +937,12 @@ export class Race {
     this.path = path;
     this.laps = laps;
     this.line = racingLine(path);
+    // tyre wear for the race distance: a set of mediums lasts about MEDIUM_LIFE of the race
+    // before it reaches the cliff, so softs want a stop (or two) and hards just about go
+    // the distance, slowly
+    const raceKm = (laps * path.length) / 1000;
+    this.wearScale = Math.min(8, Math.max(0.5, TYRE.cliff[0] / (COMPOUNDS.medium.wear * PIT_SCRUB * MEDIUM_LIFE * raceKm)));
+    playerPhysics.wearScale = this.wearScale;
     this.time = 0;
     this.sinceGreen = 0;
     const rivals = teams.filter((t) => t.id !== playerTeam.id).slice(0, opponents);
@@ -739,6 +974,9 @@ export class Race {
       e.slot = slot;
       e.style = STYLES[deck[k - 1] ?? 'balanced'];
       physics.compound = pickTyre(e.style.tyres); // kept through resets and respawns
+      physics.wearScale = this.wearScale;
+      e.pitStop = new PitStop();
+      e.pitStop.setBox(path.pit, teams.findIndex((t) => t.id === team.id)); // the team's own box
       e.retire = () => {
         if (e.retired || e.finished) return;
         e.retired = true;
@@ -751,6 +989,7 @@ export class Race {
         seed: slot * 7919 + 13 + seed,
         style: e.style,
       });
+      e.driver.race = this;
       this.entries.push(e);
     }
     this.finishOrder = [];
@@ -781,7 +1020,12 @@ export class Race {
       e.finishTime = null;
       e.flagAt = undefined;
       e.retired = false;
+      e.stops = 0;
+      e.pitStop?.reset();
       if (e.driver) {
+        e.driver.pit = null;
+        e.driver.planLap = null;
+        e.driver.stintFrom = e.progress;
         e.driver.gridLat = undefined;
         e.driver.offset = e.driver.offsetTarget = 0;
         e.driver.stuck = 0;
@@ -817,9 +1061,17 @@ export class Race {
         continue;
       }
       // finished: cruise round at a gentle pace
-      const ctl = e.driver.drive(this.entries, holding ? 0 : this.sinceGreen, dt);
+      let ctl = e.driver.drive(this.entries, holding ? 0 : this.sinceGreen, dt);
       if (e.finished) {
         ctl.throttle = p.speed < 35 ? ctl.throttle : 0;
+      }
+      // in its box: the crew holds the car until the stop is done
+      if (e.pitStop) {
+        ctl = e.pitStop.update(p, ctl, dt);
+        if (e.pitStop.released) {
+          e.stops++;
+          this.onPit?.(e);
+        }
       }
       p.step(holding ? { ...ctl, hold: true } : ctl, dt);
     }
