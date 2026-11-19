@@ -35,6 +35,7 @@ Suzuka's figure of eight crosses over itself: the back straight runs over the se
 | W / ↑ | Throttle |
 | S / ↓ | Brake / reverse |
 | A D / ← → | Steer |
+| V | Free camera: fly anywhere with WASD, Q / E down / up, Shift for speed, arrows or a mouse drag to look around, the mouse wheel to dolly. While it's on, your car drives itself on the AI's line. V or C goes back |
 | C | Cycle camera (chase, far, T-cam, driver, TV); the side mirrors work in every view. The driver view sits at the driver's eyes, behind the halo's slim centre pillar, over a steering wheel that turns with the car and has shift lights and a dash (speed, gear, position, lap, assists and tyre life) |
 | F | Change the front wing at the next pit stop (on / off; also on the HUD) |
 | R | Restart the race from the grid |
@@ -59,6 +60,7 @@ The gear in the top-right corner opens **Settings**: traction control (traction,
 - `src/night.js`: night races (`night` in a track definition): floodlight towers with lamp halos, a floodlit-area mask that leaves the land beyond the circuit dark, and a pool of point lights that follows the camera between the nearest towers
 - `src/ads.js`: the canvas atlas of made-up trackside sponsor boards
 - `src/car.js`: the car model (current-era F1 shape: multi-element wings, downwash sidepods, sculpted floor, working mirrors)
+- `src/freecam.js`: the free camera (V)
 - `src/wheel.js`: the player's steering wheel for the driver view: buttons, rotaries, shift lights and a canvas dash display
 - `src/carGeometry.js`: car-specific geometry builders (ring lofts, airfoils, extruded plates, slick tyres)
 - `src/teams.js`: the full 2026 grid (11 teams, ordered by the 2025 constructors' standings, which is also the garage order): liveries in procedural TSL paint, race numbers and sponsor layouts
@@ -106,12 +108,14 @@ By default you race the other ten teams (five on touch devices) over 5 laps, sta
 - **Difficulty**: the leading team's share of the profile, how much each team down the 2025 constructors' order gives away, and how quickly they react to the start lights. Easy 86%, Normal 88.5%, Hard 95%, Expert 98% (with McLaren at 98% and Cadillac at 95.5%, reacting in 0.10–0.22 s).
 - **Traffic**: each car looks further up the road the faster it goes. It follows a car ahead by the speed that car is about to slow to (its braking already, and the next corner), keeping 7 m plus 0.15 s, with more room around your car. If it's about to hit one anyway, it brakes as hard as it can. It pulls out to pass on the side with more room (never across a car alongside), and keeps a car's width from a car next to it. For the first seconds after the start everyone holds their grid lane, with no dives for gaps. A car in trouble (getting going again, off the track, crawling) keeps to the side it's on while faster cars come past. A car stuck, facing backwards or wrecked (broken suspension, dead engine) is put back on the line behind where it was, repaired, unless *No resets* is on (below).
 - **Contact**: cars are three circles along their length; overlaps are pushed apart, the closing speed is shared, off-centre hits spin the car, and (with damage on) both cars are damaged.
+- **Driving styles**: every race deals each AI driver a style. *Aggressive* drivers brake later, carry more speed into corners, follow closer and dive for gaps, and push on regardless of tyre wear. *Smooth* ones brake earlier, leave more room and look after their tyres. *Rookies* are erratic. *Balanced* sits in the middle. Each style also gets a mistake rate: now and then a driver misses a braking point and runs wide through the corner (often across the grass or into the gravel), or gets on the power too early with the traction control off and snaps into a slide or a spin. Hover over a name in the timing tower to see its style.
+- **Tyres**: each AI car starts on soft, medium or hard (aggressive drivers favour softs, smooth ones hards), shown in the timing tower and on its sidewalls. It drives to the grip it actually has: its speed profile is rebuilt for the compound, the temperature (cold hards take care) and the wear, corners and braking alike. Softs are quicker early and fade as they wear; hards are slow until they come in.
 
 **No resets** (Settings, or `?resets=0`): a crashed AI car is never put back. It gets itself going: it backs away from whatever it hit, steering so the nose swings towards the line, then drives off. Facing the wrong way, that becomes a three-point turn. A car whose tries get it nowhere six times in a row retires. So does a car with broken suspension or a dead engine (it can't pit for repairs): it coasts to just off the asphalt and stops. Retired cars stay parked where they stopped, the other cars drive round them, and the timing tower shows them as OUT.
 
 The HUD shows your position and laps, and a timing tower with gaps to the leader. Settings has *AI opponents* on / off, *AI difficulty* (easy / normal / hard / expert), *Race length* (3, 5, 10 or 20 laps) and *No resets*. URL overrides: `?ai=<0-10>` opponents, `?laps=<n>`, `?difficulty=easy|normal|hard|expert`, `?resets=0`.
 
-`node scripts/ai-check.mjs <track> [laps] [opponents] [level]` runs a whole race headless (every car AI-driven) and prints the result, best laps, wall contacts, time off track, respawns and car-to-car contacts (`NORESETS=1` for no-resets mode).
+`node scripts/ai-check.mjs <track> [laps] [opponents] [level]` runs a whole race headless (every car AI-driven) and prints the result, each car's style and tyres, best laps, wall contacts, time off track, respawns, mistakes and car-to-car contacts (`NORESETS=1` for no-resets mode, `SEED=<n>` for another deal of styles and tyres).
 
 ## Damage
 

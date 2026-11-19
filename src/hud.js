@@ -154,7 +154,11 @@ export class Hud {
         gap = down >= 1 ? `+${down} LAP${down > 1 ? 'S' : ''}` : `+${race.gapTo(e, leader).toFixed(1)}`;
       }
       const name = e.isPlayer ? 'YOU' : e.team.name;
-      return `<li class="${e.isPlayer ? 'me' : ''}${e.finished ? ' done' : ''}${e.retired ? ' out' : ''}"><span class="p">${e.position}</span><i style="background:${e.team.ui.primary}"></i><span>${name}</span><span class="gap">${gap}</span></li>`;
+      // the tyre each car is on, in its sidewall colour (and the AI's driving style on hover)
+      const c = e.physics.compound;
+      const tyre = c ? `<b class="tyre" style="color:${c.css};border-color:${c.css}">${c.letter}</b>` : '<b></b>';
+      const title = e.style ? ` title="${e.style.name} driver"` : '';
+      return `<li${title} class="${e.isPlayer ? 'me' : ''}${e.finished ? ' done' : ''}${e.retired ? ' out' : ''}"><span class="p">${e.position}</span><i style="background:${e.team.ui.primary}"></i><span>${name}</span>${tyre}<span class="gap">${gap}</span></li>`;
     });
     document.getElementById('standings-list').innerHTML = rows.join('');
   }

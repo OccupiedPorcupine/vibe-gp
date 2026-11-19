@@ -418,10 +418,13 @@ function sidewallTexture() {
  * The compound colour is a uniform (m.userData.compound) so a tyre change needs no new
  * shader; the pattern uses the raw geometry so it also works on instanced tyres.
  */
-export function tyreMaterial(radius, compoundHex = 0xd8261c) {
+export function tyreMaterial(radius, compoundHex = 0xd8261c, { perObject = false } = {}) {
   const m = new THREE.MeshStandardNodeMaterial();
   const p = positionGeometry;
   const compound = uniform(new THREE.Color(compoundHex));
+  // shared by many cars (the AI's): each tyre mesh carries its own colour in
+  // userData.tyreColor, so one shader serves every compound
+  if (perObject) compound.onObjectUpdate(({ object }) => object.userData.tyreColor ?? compound.value);
   const rr = length(p.yz).div(radius); // 0.63 at the bead, 1 on the tread
   const side = smoothstep(0.55, 0.75, abs(normalGeometry.x)); // sidewall faces only
   const ring = smoothstep(0.715, 0.725, rr).mul(smoothstep(0.765, 0.755, rr)).mul(side);
