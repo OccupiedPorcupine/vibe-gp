@@ -190,6 +190,55 @@ async function start() {
     }
     return autopilot.driver.drive(autopilot.field, race ? race.sinceGreen : startLights.holding ? 0 : 99, dt);
   }
+
+  // ---- watching another car: in free cam, click it in the timing tower. The camera views
+  // (C) ride on that car instead, [ and ] step to the car ahead / behind, G takes the wheel
+  // (your own car drives itself meanwhile) and V goes back to free cam ----
+  let watching = null; // the race entry being watched (an AI car), or null
+  let driving = false; // the player is driving the watched car
+  let aidsKept = null; // the watched car's own assists, while the player drives it with theirs
+  function takeWheel(on) {
+    if (!watching || on === driving) return;
+    const p = watching.physics;
+    if (on) {
+      if (watching.retired || watching.finished) {
+        timer.flash = { text: `${watching.team.name.toUpperCase()} IS ${watching.retired ? 'OUT' : 'FINISHED'}`, until: timer.time + 1.5, warn: true };
+        return;
+      }
+      aidsKept = { tc: p.tc, abs: p.abs };
+      p.tc = settings.get('tc');
+      p.abs = settings.get('abs');
+    } else {
+      Object.assign(p, aidsKept);
+      watching.driver.resume(); // its AI carries on from here
+    }
+    driving = on;
+    timer.flash = on
+      ? { text: `YOU'RE DRIVING THE ${watching.team.name.toUpperCase()} · G HANDS IT BACK`, until: timer.time + 3 }
+      : { text: `${watching.team.name.toUpperCase()} BACK TO ITS DRIVER`, until: timer.time + 1.5 };
+  }
+  /** Watch race entry e (null or the player's own entry: back to your car). */
+  function watch(e) {
+    if (e === watching) return;
+    takeWheel(false);
+    watching?.car.setDriverView(false);
+    rig.initialised = false;
+    if (!e || e.isPlayer) {
+      watching = hud.watching = null;
+      if (e) timer.flash = { text: 'BACK TO YOUR CAR', until: timer.time + 1.5 };
+      return;
+    }
+    watching = hud.watching = e;
+    freecam.stop();
+    timer.flash = { text: `WATCHING ${e.team.name.toUpperCase()} · G TO DRIVE IT`, until: timer.time + 3 };
+  }
+  /** [ / ]: watch the car one place ahead (-1) or behind (+1) of the one being watched. */
+  function watchNext(step) {
+    const order = race.order.filter((e) => !e.retired);
+    const i = order.indexOf(watching);
+    const next = order[(i + step + order.length) % order.length];
+    watch(next.isPlayer ? order[(i + 2 * step + order.length) % order.length] : next);
+  }
   const timer = new LapTimer();
   const startLights = new StartLights();
   const hud = new Hud();
@@ -206,12 +255,18 @@ async function start() {
 
   // tyre compound for the next stop: keys 1-3 in the race, or click the HUD tyres
   const pickCompound = (c) => {
-    pitStop.nextCompound = c;
+    (driving ? watching.pitStop : pitStop).nextCompound = c;
   };
   hud.onCompound = pickCompound;
+  // a car clicked in the timing tower: watch it (from free cam, or another one already watched)
+  hud.onPick = (e) => {
+    if (freecam.active || watching) watch(e);
+    else timer.flash = { text: 'PRESS V FOR FREE CAM, THEN CLICK A CAR TO WATCH IT', until: timer.time + 2.5 };
+  };
   // front wing change at the next stop: key F in the race, or click the HUD button
   const toggleWing = () => {
-    pitStop.nextWing = !pitStop.nextWing;
+    const p = driving ? watching.pitStop : pitStop;
+    p.nextWing = !p.nextWing;
   };
   hud.onWing = toggleWing;
   // driver aids, collision damage and sound: toggled in the settings panel (gear, top right)
@@ -230,7 +285,7 @@ async function start() {
     physics.abs = settings.get('abs');
     physics.damageOn = settings.get('damage');
   };
-  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS', ai: 'AI OPPONENTS', aiLevel: 'AI DIFFICULTY', laps: 'RACE LAPS', noResets: 'NO RESETS' };
+  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS', ai: 'AI OPPONENTS', aiLevel: 'AI DIFFICULTY', laps: 'RACE LAPS', noResets: 'NO RESETS', chaos: 'AI CHAOS' };
   settings.onChange = (id, on) => {
     if (id === 'music') sound.setMusic(on);
     if (id === 'sound') sound.setSfx(on);
@@ -247,18 +302,20 @@ async function start() {
     }
     // a new field (or none) means a fresh start from the grid
     if (id === 'ai' || id === 'aiLevel' || id === 'laps') resetCar();
+    if (id === 'chaos') race?.setChaos(raceOptions().chaos); // live, mid-race too
     const value = on === true ? 'ON' : on === false ? 'OFF' : String(on).toUpperCase();
     timer.flash = { text: `${SETTING_NAMES[id]} ${value}`, until: timer.time + 1.5 };
   };
 
-  // ---- AI opponents: ?ai=<count> (0 = none), ?laps=<n>, ?difficulty=easy|normal|hard|expert and
-  // ?resets=0 (no-resets mode) override Settings ----
+  // ---- AI opponents: ?ai=<count> (0 = none), ?laps=<n>, ?difficulty=easy|normal|hard|expert,
+  // ?chaos=0..100 and ?resets=0 (no-resets mode) override Settings ----
   const query = new URLSearchParams(location.search);
   function raceOptions() {
     const opponents = query.has('ai') ? Math.max(0, Math.min(10, +query.get('ai') || 0)) : settings.get('ai') ? (MOBILE ? 5 : 10) : 0;
     const laps = Math.max(1, +(query.get('laps') ?? settings.get('laps')) || 5);
     const level = query.get('difficulty') ?? settings.get('aiLevel');
-    return { opponents, laps, level: AI_LEVELS[level] ? level : 'normal' };
+    const chaos = Math.max(0, Math.min(100, +(query.get('chaos') ?? settings.get('chaos')) || 0)) / 100;
+    return { opponents, laps, level: AI_LEVELS[level] ? level : 'normal', chaos };
   }
   // no-resets mode: crashed AI cars aren't put back on the track (applies at once, mid-race too)
   const aiResets = () => (query.has('resets') ? query.get('resets') !== '0' : !settings.get('noResets'));
@@ -274,6 +331,7 @@ async function start() {
 
   /** Build (or clear) the AI field for the current track, team and settings. */
   function buildRace() {
+    watch(null);
     for (const e of race?.ai ?? []) {
       scene.remove(e.car.group, e.car.debris);
       e.car.clearDebris();
@@ -473,6 +531,7 @@ async function start() {
   }
 
   function resetCar() {
+    watch(null);
     // a different team, field size, length or difficulty needs a new field
     if ((race?.key ?? null) !== (raceOptions().opponents > 0 ? raceKey(raceOptions()) : null)) buildRace();
     else race?.reset();
@@ -605,12 +664,23 @@ async function start() {
       syncCar(0);
     } else {
       if (input.hit('Escape') || input.hit('KeyP')) setPaused(true);
-      if (input.hit('KeyV')) toggleFree();
+      if (input.hit('KeyV')) {
+        if (watching) {
+          watch(null); // free cam again, from where the camera is now
+          toggleFree();
+        } else toggleFree();
+      }
       if (input.hit('KeyC')) {
         if (freecam.active) toggleFree();
         else rig.next();
       }
-      if (input.hit('KeyR')) resetCar();
+      if (watching && input.hit('KeyG')) takeWheel(!driving);
+      if (watching && input.hit('BracketLeft')) watchNext(-1);
+      if (watching && input.hit('BracketRight')) watchNext(1);
+      if (input.hit('KeyR')) {
+        if (driving) watching.driver.respawn(race.entries); // the car you're driving, back on the line
+        else resetCar();
+      }
       COMPOUND_LIST.forEach((c, i) => input.hit(`Digit${i + 1}`) && pickCompound(c));
       if (input.hit('KeyF')) toggleWing();
 
@@ -618,14 +688,15 @@ async function start() {
       const controls = input.state;
       while (acc >= FIXED) {
         startLights.update(FIXED);
-        const held = pitStop.update(physics, freecam.active ? autopilotStep(FIXED) : controls, FIXED);
+        const own = freecam.active || watching ? autopilotStep(FIXED) : controls;
+        const held = pitStop.update(physics, own, FIXED);
         physics.step(startLights.holding ? { ...held, hold: true } : held, FIXED);
         damageFlash();
         if (pitStop.released) {
           timer.flash = { text: `PIT STOP ${pitStop.lastStop.toFixed(1)} s`, until: timer.time + 2.5 };
           if (race) race.player.stops++;
         }
-        tyreCall();
+        if (!watching) tyreCall();
         const prevBest = timer.best;
         timer.update(physics.trackS, track.path.length, FIXED);
         if (timer.best !== prevBest && timer.best !== null) {
@@ -633,35 +704,42 @@ async function start() {
           menu.refreshBest(track.def.id);
         }
         // the AI cars, then car-to-car contact (after the timer, so a finish flash wins)
-        race?.stepAI(startLights.holding, FIXED, { damage: settings.get('damage'), resets: aiResets() });
+        race?.stepAI(startLights.holding, FIXED, { damage: settings.get('damage'), resets: aiResets(), takeover: driving ? watching : null, controls });
         acc -= FIXED;
       }
       syncCar(dt);
       if (freecam.active) freecam.update(input, dt);
+      else if (watching) rig.update(watching.physics, dt, watching.car);
       else rig.update(physics, dt, car);
     }
+    if (menu.visible && watching) watch(null);
     const camMode = freecam.active ? 'free' : rig.mode;
+    // the car the camera, HUD and sound follow: yours, or the one being watched
+    const view = watching ?? race?.player;
+    const viewed = watching ? watching.physics : physics;
     // driver view: hide the helmet the eye sits in and run the steering wheel's display
     const driverView = !menu.visible && camMode === 'driver';
-    const me = race?.player;
-    car.setDriverView(driverView, driverView && {
-      car: physics,
+    if (driverView && watching) watching.car.ensureWheel();
+    (watching?.car ?? car).setDriverView(driverView, driverView && {
+      car: viewed,
       dt: paused ? 0 : dt,
-      info: me ? { position: me.position, cars: race.entries.length, lap: me.lap, laps: race.laps } : { lap: timer.lap },
+      info: view ? { position: view.position, cars: race.entries.length, lap: view.lap, laps: race.laps } : { lap: timer.lap },
     });
+    if (watching) car.setDriverView(false);
     input.endFrame();
 
     // keep the shadow frustum centred on the car
-    const p = physics.position;
-    const py = physics.height;
+    const p = viewed.position;
+    const py = viewed.height;
     sun.position.set(p.x + keyDir[0] * 100, py + keyDir[1] * 100, p.z + keyDir[2] * 100);
     sun.target.position.set(p.x, py, p.z);
     floods.update(camera.position, track?.floodStrength);
 
-    boxMarker.update(dt, pitStop, !menu.visible);
-    hud.update(physics, timer, camMode, pitStop);
+    boxMarker.update(dt, pitStop, !menu.visible && !driving);
+    const label = watching ? `${camMode} · ${watching.team.name}${driving ? ' · YOU' : ''}` : camMode;
+    hud.update(viewed, timer, label, driving ? watching.pitStop : watching ? null : pitStop);
     hud.updateRace(now / 1000);
-    sound.update(physics, { camera, mode: camMode, racing: !menu.visible && !paused });
+    sound.update(viewed, { camera, mode: camMode, racing: !menu.visible && !paused });
     if (import.meta.env.DEV) {
       window.__game = { rig, freecam, race, physics, timer, startLights, track, pitStop, crews, loadTrack, TRACKS, menu, car, setTeam, TEAMS, scene, sun, floods, renderer, sound };
       // automated screenshots can pin the camera: window.__fixedCam = { x, y, z, tx, ty, tz }

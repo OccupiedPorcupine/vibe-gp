@@ -2,6 +2,7 @@
 //
 //   node scripts/ai-check.mjs <trackId> [laps] [opponents] [level: easy|normal|hard|expert]
 //   NORESETS=1 node scripts/ai-check.mjs ...   (no-resets mode: stuck cars recover or retire)
+//   CHAOS=0..1 node scripts/ai-check.mjs ...    (the AI chaos setting; default 0.4)
 //
 // Prints each car's best lap, finishing order, wall contacts, off-track time, respawns and
 // its tyres: the compound of each stint (S-M: started on softs, one stop for mediums).
@@ -25,7 +26,7 @@ const P = new TrackPath(def);
 const playerTeam = TEAMS[TEAMS.length - 1];
 const player = new CarPhysics(P, P.gridPose(0));
 const t0 = performance.now();
-const race = new Race(P, playerTeam, player, TEAMS, { opponents, laps, level, seed: +(process.env.SEED ?? 1) });
+const race = new Race(P, playerTeam, player, TEAMS, { opponents, laps, level, seed: +(process.env.SEED ?? 1), chaos: +(process.env.CHAOS ?? 0.4) });
 console.log(`racing line built in ${(performance.now() - t0).toFixed(0)} ms; ${race.entries.length} cars, ${laps} laps of ${def.name} (${P.length.toFixed(0)} m)`);
 player.reset(race.playerGrid());
 race.player.driver = new AIDriver(race.player, race.line, { pace: teamPace(TEAMS.length - 1, level), seed: 99 });

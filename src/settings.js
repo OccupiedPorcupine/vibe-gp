@@ -3,7 +3,7 @@
 // saved to localStorage so they survive reloads and track changes.
 
 const KEY = 'vibegp.settings';
-const DEFAULTS = { tc: true, abs: true, damage: true, music: true, sound: true, ai: true, aiLevel: 'normal', laps: 5, noResets: false };
+const DEFAULTS = { tc: true, abs: true, damage: true, music: true, sound: true, ai: true, aiLevel: 'normal', laps: 5, noResets: false, chaos: 40 };
 
 const TOGGLES = [
   { id: 'tc', name: 'Traction control', desc: 'Traction, stability and steering assists' },
@@ -15,6 +15,8 @@ const TOGGLES = [
   // choices: a click steps to the next value
   { id: 'aiLevel', name: 'AI difficulty', desc: 'How hard the other cars push', choices: ['easy', 'normal', 'hard', 'expert'] },
   { id: 'laps', name: 'Race length', desc: 'Laps, with AI opponents', choices: [3, 5, 10, 20] },
+  // range: a slider [min, max, step]; changes apply at once
+  { id: 'chaos', name: 'AI chaos', desc: 'How differently the AI drivers race: low is tidy, high is late braking, divebombs and crashes', range: [0, 100, 5] },
   { id: 'noResets', name: 'No resets', desc: 'A crashed AI car isn\'t put back on the track: it drives itself out, or retires' },
 ];
 
@@ -36,6 +38,19 @@ export class Settings {
 
     this.switches = {};
     for (const t of TOGGLES) {
+      if (t.range) {
+        const row = document.createElement('label');
+        row.className = 'setting slider';
+        const [min, max, step] = t.range;
+        row.innerHTML = `<span><b>${t.name} <em class="value"></em></b><small>${t.desc}</small></span><input type="range" min="${min}" max="${max}" step="${step}">`;
+        const input = row.querySelector('input');
+        input.addEventListener('input', () => this.set(t.id, +input.value));
+        // arrow keys drive the car: hand focus back to the game once the slider is let go
+        input.addEventListener('change', () => input.blur());
+        list.appendChild(row);
+        this.switches[t.id] = row;
+        continue;
+      }
       const row = document.createElement('button');
       row.className = 'setting';
       row.type = 'button';
@@ -86,6 +101,11 @@ export class Settings {
 
   render() {
     for (const [id, row] of Object.entries(this.switches)) {
+      if (row.classList.contains('slider')) {
+        row.querySelector('input').value = this.values[id];
+        row.querySelector('.value').textContent = this.values[id];
+        continue;
+      }
       if (row.classList.contains('choices')) {
         row.querySelector('.choice').textContent = String(this.values[id]).toUpperCase();
         continue;

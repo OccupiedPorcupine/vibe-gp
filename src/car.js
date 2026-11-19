@@ -755,11 +755,10 @@ export class Car {
       this.add(b, boxGeometry(0.2, 0.06, 0.04), this.common.visor, [0, 0.78, 0.12]),
       this.add(b, sphereGeometry(0.16, 16, 10, [1.15, 0.75, 0.8]), this.common.suit, [0, 0.58, -0.1]),
     ];
-    // the player's steering wheel, with shift lights and a dash display (AI cars: none)
-    if (!this.ai) {
-      this.wheel = new SteeringWheel(carbon);
-      b.add(this.wheel.group);
-    }
+    // the player's steering wheel, with shift lights and a dash display (AI cars get one
+    // when someone watches from their driver view: see ensureWheel)
+    this.carbon = carbon;
+    if (!this.ai) this.ensureWheel();
     this.buildMirrors(carbon);
   }
 
@@ -921,6 +920,13 @@ export class Car {
    * physics state, race info { position, cars, lap, laps } and dt) redraws the wheel's
    * display.
    */
+  /** Fit the steering wheel (built on first use for an AI car being watched from the cockpit). */
+  ensureWheel() {
+    if (this.wheel) return;
+    this.wheel = new SteeringWheel(this.carbon);
+    this.body.add(this.wheel.group);
+  }
+
   setDriverView(on, dash) {
     if (this.driverView !== on) {
       this.driverView = on;
