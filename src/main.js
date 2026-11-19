@@ -23,6 +23,7 @@ import { COMPOUND_LIST } from './tyres.js';
 import { DAMAGE } from './damage.js';
 import { Sound } from './sound.js';
 import { Race } from './ai.js';
+import { PauseMenu } from './pause.js';
 
 const SUN_DIR = [0.45, 0.8, 0.35];
 // Night races: the key light is the floodlights, nearly overhead (short shadows under the
@@ -194,7 +195,7 @@ async function start() {
   // a phone held upright: the #rotate overlay covers the game (style.css), which waits for it
   const upright = matchMedia('(pointer: coarse) and (orientation: portrait) and (max-width: 600px)');
   sound.setPaused(upright.matches);
-  upright.addEventListener('change', (e) => sound.setPaused(e.matches));
+  upright.addEventListener('change', (e) => sound.setPaused(e.matches || paused));
   /** Push the saved settings onto the car physics (a new track makes a new CarPhysics). */
   const applySettings = () => {
     physics.tc = settings.get('tc');
@@ -359,6 +360,7 @@ async function start() {
     compiling = true;
     loading.show(def.name);
     await nextFrame();
+    setPaused(false);
     if (track) {
       scene.remove(track.group, crews.group);
       track.dispose();
@@ -448,9 +450,48 @@ async function start() {
     },
   });
   const showMenu = (trackId) => {
+    setPaused(false);
     menu.show(trackId);
     setUrlParams({ track: null });
   };
+
+  // ---- pause: Esc / P in a race (MENU on touch screens), or the window losing focus ----
+  let paused = false;
+  const pauseMenu = new PauseMenu({
+    resume: () => setPaused(false),
+    restart: () => {
+      setPaused(false);
+      resetCar();
+    },
+    settings: () => settings.toggle(true),
+    quit: () => showMenu(track.def.id),
+  });
+  /** Freeze (or unfreeze) the race: no simulation, camera or sound while paused. */
+  function setPaused(on) {
+    if (paused === on) return;
+    if (on && (!track || menu.visible || compiling)) return; // only a race in progress pauses
+    paused = on;
+    if (on) pauseMenu.show(pauseInfo());
+    else {
+      pauseMenu.hide();
+      settings.toggle(false);
+      acc = 0; // pick up where it left off, not with the time spent paused
+    }
+    sound.setPaused(on || upright.matches);
+  }
+  /** One line about the race so far, for the pause menu. */
+  function pauseInfo() {
+    const where = track.def.name;
+    if (race) {
+      const me = race.player;
+      const lap = me.finished ? 'Finished' : me.lap === 0 ? 'Out lap' : `Lap ${Math.min(me.lap, race.laps)} of ${race.laps}`;
+      return `${where} · ${lap} · P${me.position} of ${race.entries.length}`;
+    }
+    return `${where} · ${timer.lap === 0 ? 'Out lap' : `Lap ${timer.lap}`} · Best ${formatTime(timer.best)}`;
+  }
+  // switching tab or window mid-race pauses it
+  addEventListener('blur', () => setPaused(true));
+  document.addEventListener('visibilitychange', () => document.hidden && setPaused(true));
   // ?track=<id> skips the menu and starts that race directly (team comes from ?team=)
   const urlTrack = TRACKS.find((t) => t.id === new URLSearchParams(location.search).get('track'));
   if (urlTrack) {
@@ -509,8 +550,11 @@ async function start() {
       camera.position.set(cx + Math.cos(orbit) * r, cy + h, cz + Math.sin(orbit) * r);
       camera.lookAt(cx, cy + 0.5 * closeUp, cz);
       syncCar(0);
+    } else if (paused) {
+      pauseMenu.handleKeys(input); // the race stays frozen; the cars hold their poses
+      syncCar(0);
     } else {
-      if (input.hit('Escape')) showMenu(track.def.id);
+      if (input.hit('Escape') || input.hit('KeyP')) setPaused(true);
       if (input.hit('KeyC')) rig.next();
       if (input.hit('KeyR')) resetCar();
       COMPOUND_LIST.forEach((c, i) => input.hit(`Digit${i + 1}`) && pickCompound(c));
@@ -549,7 +593,7 @@ async function start() {
     boxMarker.update(dt, pitStop, !menu.visible);
     hud.update(physics, timer, rig.mode, pitStop);
     hud.updateRace(now / 1000);
-    sound.update(physics, { camera, mode: rig.mode, racing: !menu.visible });
+    sound.update(physics, { camera, mode: rig.mode, racing: !menu.visible && !paused });
     if (import.meta.env.DEV) {
       window.__game = { race, physics, timer, startLights, track, pitStop, crews, loadTrack, TRACKS, menu, car, setTeam, TEAMS, scene, sun, floods, renderer, sound };
       // automated screenshots can pin the camera: window.__fixedCam = { x, y, z, tx, ty, tz }
