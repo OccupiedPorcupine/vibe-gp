@@ -580,6 +580,14 @@ async function start() {
       syncCar(dt);
       rig.update(physics, dt, car);
     }
+    // driver view: hide the helmet the eye sits in and run the steering wheel's display
+    const driverView = !menu.visible && rig.mode === 'driver';
+    const me = race?.player;
+    car.setDriverView(driverView, driverView && {
+      car: physics,
+      dt: paused ? 0 : dt,
+      info: me ? { position: me.position, cars: race.entries.length, lap: me.lap, laps: race.laps } : { lap: timer.lap },
+    });
     input.endFrame();
 
     // keep the shadow frustum centred on the car
@@ -594,7 +602,7 @@ async function start() {
     hud.updateRace(now / 1000);
     sound.update(physics, { camera, mode: rig.mode, racing: !menu.visible && !paused });
     if (import.meta.env.DEV) {
-      window.__game = { race, physics, timer, startLights, track, pitStop, crews, loadTrack, TRACKS, menu, car, setTeam, TEAMS, scene, sun, floods, renderer, sound };
+      window.__game = { rig, race, physics, timer, startLights, track, pitStop, crews, loadTrack, TRACKS, menu, car, setTeam, TEAMS, scene, sun, floods, renderer, sound };
       // automated screenshots can pin the camera: window.__fixedCam = { x, y, z, tx, ty, tz }
       const fc = window.__fixedCam;
       if (fc) {

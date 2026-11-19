@@ -35,7 +35,7 @@ Suzuka's figure of eight crosses over itself: the back straight runs over the se
 | W / ↑ | Throttle |
 | S / ↓ | Brake / reverse |
 | A D / ← → | Steer |
-| C | Cycle camera (chase, far, T-cam, driver, TV); the side mirrors work in every view |
+| C | Cycle camera (chase, far, T-cam, driver, TV); the side mirrors work in every view. The driver view sits at the driver's eyes, behind the halo's slim centre pillar, over a steering wheel that turns with the car and has shift lights and a dash (speed, gear, position, lap, assists and tyre life) |
 | F | Change the front wing at the next pit stop (on / off; also on the HUD) |
 | R | Restart the race from the grid |
 | Esc / P | Pause menu: resume, restart the race, settings, or change car or circuit. The race also pauses when the window loses focus |
@@ -59,6 +59,7 @@ The gear in the top-right corner opens **Settings**: traction control (traction,
 - `src/night.js`: night races (`night` in a track definition): floodlight towers with lamp halos, a floodlit-area mask that leaves the land beyond the circuit dark, and a pool of point lights that follows the camera between the nearest towers
 - `src/ads.js`: the canvas atlas of made-up trackside sponsor boards
 - `src/car.js`: the car model (current-era F1 shape: multi-element wings, downwash sidepods, sculpted floor, working mirrors)
+- `src/wheel.js`: the player's steering wheel for the driver view: buttons, rotaries, shift lights and a canvas dash display
 - `src/carGeometry.js`: car-specific geometry builders (ring lofts, airfoils, extruded plates, slick tyres)
 - `src/teams.js`: the full 2026 grid (11 teams, ordered by the 2025 constructors' standings, which is also the garage order): liveries in procedural TSL paint, race numbers and sponsor layouts
 - `src/logos.js`: hand-drawn vector stand-ins for the team and sponsor logos (brand colours or single-colour ink)

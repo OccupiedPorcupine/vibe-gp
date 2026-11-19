@@ -14,6 +14,7 @@ import {
 } from './materials.js';
 import { color, texture, uv, vec2, vec3, smoothstep, uniform } from 'three/tsl';
 import { DAMAGE } from './damage.js';
+import { SteeringWheel } from './wheel.js';
 
 /** Layer holding the mirror glass: the main camera must enable it, mirror cameras don't. */
 export const MIRROR_LAYER = 1;
@@ -732,8 +733,16 @@ export class Car {
     this.add(b, boxGeometry(0.11, 0.03, 0.07), tcamMat, [0, 1.07, -0.33]);
     // driver helmet
     const helmet = sphereGeometry(0.13, 20, 14, [1, 1.05, 1.15]);
-    this.add(b, helmet, helmetMat, [0, 0.76, -0.02]);
-    this.add(b, boxGeometry(0.2, 0.06, 0.04), this.common.visor, [0, 0.78, 0.12]);
+    // hidden in the driver view, whose eye is inside it (see setDriverView)
+    this.helmet = [
+      this.add(b, helmet, helmetMat, [0, 0.76, -0.02]),
+      this.add(b, boxGeometry(0.2, 0.06, 0.04), this.common.visor, [0, 0.78, 0.12]),
+    ];
+    // the player's steering wheel, with shift lights and a dash display (AI cars: none)
+    if (!this.ai) {
+      this.wheel = new SteeringWheel(carbon);
+      b.add(this.wheel.group);
+    }
     this.buildMirrors(carbon);
   }
 
@@ -823,7 +832,9 @@ export class Car {
       [0, y + 0.03, 0.32], [0.2, y + 0.02, 0.22], [0.3, y, -0.02], [0.32, 0.78, -0.25], [0.3, 0.6, -0.4],
     ];
     const hoop = tubeGeometry(loop, 0.028, 10);
-    const pillar = tubeGeometry([[0, y + 0.03, 0.32], [0, 0.78, 0.48], [0, 0.6, 0.6]], 0.026, 10);
+    // the centre pillar is slim and blends into the hoop, as on the real titanium halo:
+    // from the driver's seat it's a thin line down the middle of the view
+    const pillar = tubeGeometry([[0, y + 0.025, 0.31], [0, 0.8, 0.46], [0, 0.6, 0.6]], 0.013, 10);
     return mergeGeometries([hoop, pillar]);
   }
 
@@ -885,6 +896,19 @@ export class Car {
     }
   }
 
+  /**
+   * Driver view on / off: hides the helmet the eye sits in. While it's on, `dash` (the
+   * physics state, race info { position, cars, lap, laps } and dt) redraws the wheel's
+   * display.
+   */
+  setDriverView(on, dash) {
+    if (this.driverView !== on) {
+      this.driverView = on;
+      for (const m of this.helmet) m.visible = !on;
+    }
+    if (on && dash && this.wheel) this.wheel.update(dash.car, dash.info, dash.dt);
+  }
+
   /** Free GPU resources (call after removing the car from the scene). */
   dispose() {
     this.clearDebris();
@@ -899,6 +923,7 @@ export class Car {
     for (const m of this.mirrors) m.target?.dispose();
     this.smokeGeo?.dispose();
     for (const t of this.textures) t.dispose();
+    this.wheel?.dispose();
   }
 
   /** Sidewall colours for the compound fitted (an entry of COMPOUNDS). */
@@ -928,6 +953,7 @@ export class Car {
       w.steer.position.y = w.radius - w.drop;
       w.spin.rotation.x += (state.speed / w.radius) * dt;
     }
+    this.wheel?.steer(state.steerAngle);
     // body pitch under accel/brake, roll in corners (smoothed in physics)
     this.body.rotation.x = state.pitch;
     this.body.rotation.z = state.roll;
