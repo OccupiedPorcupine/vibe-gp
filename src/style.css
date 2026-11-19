@@ -46,6 +46,7 @@ small { color: #9aa3b5; font-size: 11px; letter-spacing: 0.14em; }
 .settings-btn {
   pointer-events: auto;
   position: absolute;
+  z-index: 3; /* above the pause menu */
   top: 16px;
   right: 16px;
   width: 40px;
@@ -127,6 +128,50 @@ small { color: #9aa3b5; font-size: 11px; letter-spacing: 0.14em; }
   font-weight: 700;
   letter-spacing: 0.08em;
   text-align: center;
+}
+
+/* pause menu (src/pause.js): over the HUD, under the settings panel it can open */
+#pause {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(8, 10, 16, 0.55);
+  backdrop-filter: blur(3px);
+  pointer-events: auto;
+}
+#pause[hidden] { display: none; }
+.pause-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: min(360px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 26px 28px 20px;
+  border-radius: 14px;
+  border-left: 3px solid var(--team, #e10600);
+  background: rgba(10, 12, 18, 0.88);
+}
+#pause h2 { margin: 0; font-size: 34px; font-weight: 900; font-style: italic; letter-spacing: 0.12em; text-transform: uppercase; }
+.pause-info { margin: 0 0 8px; color: #9aa3b5; font-size: 13px; letter-spacing: 0.06em; text-align: center; }
+.pause-items { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.pause-btn { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-width: 0; padding: 11px 22px; font-size: 14px; letter-spacing: 0.1em; white-space: nowrap; }
+.pause-btn:hover { transform: none; }
+.pause-btn.focused { border-color: var(--team, #e10600); background: color-mix(in srgb, var(--team, #e10600) 22%, rgba(20, 23, 32, 0.9)); }
+.pause-btn kbd { font: inherit; font-size: 11px; font-weight: 700; color: #9aa3b5; border: 1px solid #3a4152; border-radius: 4px; padding: 1px 6px; }
+.pause-hint { margin: 6px 0 0; color: #8790a3; font-size: 12px; }
+/* a phone on its side: the panel has to fit ~360 px of height */
+@media (max-height: 500px) {
+  .pause-panel { gap: 6px; padding: 12px 18px 10px; }
+  #pause h2 { font-size: 22px; }
+  .pause-info { margin: 0 0 2px; font-size: 12px; }
+  .pause-items { gap: 6px; }
+  .pause-btn { padding: 7px 16px; font-size: 12px; }
 }
 
 /* race standings (AI opponents): a timing tower down the left side */
@@ -435,6 +480,7 @@ small { color: #9aa3b5; font-size: 11px; letter-spacing: 0.14em; }
   .dash { top: 8px; left: calc(max(8px, env(safe-area-inset-left)) + 134px); transform: scale(0.6); }
   .damage-map { top: 84px; left: max(8px, env(safe-area-inset-left)); transform: scale(0.45); }
   .map { top: 60px; right: max(8px, env(safe-area-inset-right)); transform: scale(0.45); transform-origin: top right; }
+  .pause-btn kbd, .pause-hint { display: none; }
   .standings { top: 150px; left: max(8px, env(safe-area-inset-left)); transform: scale(0.5); transform-origin: top left; }
   .settings-btn { top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right)); width: 44px; height: 44px; }
   .settings { top: 60px; right: max(8px, env(safe-area-inset-right)); max-height: calc(100dvh - 68px); overflow-y: auto; }

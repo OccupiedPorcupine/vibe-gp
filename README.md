@@ -37,8 +37,8 @@ Suzuka's figure of eight crosses over itself: the back straight runs over the se
 | A D / ← → | Steer |
 | C | Cycle camera (chase, far, T-cam, driver, TV); the side mirrors work in every view |
 | F | Change the front wing at the next pit stop (on / off; also on the HUD) |
-| R | Reset to the grid |
-| Esc | Back to the track selector |
+| R | Restart the race from the grid |
+| Esc / P | Pause menu: resume, restart the race, settings, or change car or circuit. The race also pauses when the window loses focus |
 
 On a phone or tablet the game shows touch controls (steering pad, gas, brake, menu, camera, reset); phones play in landscape. Tyre and front wing choices are keyboard or desktop HUD only.
 
