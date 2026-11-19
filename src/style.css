@@ -584,22 +584,30 @@ small { color: #9aa3b5; font-size: 11px; letter-spacing: 0.14em; }
 .monitor-caption i.replay { color: #ffd400; }
 .monitor-caption small { margin-left: auto; overflow: hidden; text-overflow: ellipsis; color: rgba(255, 255, 255, 0.75); font-size: 10px; }
 
-/* director mode (M): a strip of onboard monitors along the bottom, right of the timing tower,
-   over where the dash and damage diagram are (they step aside). The pictures are drawn in
-   the 3D view behind these frames (src/director.js). */
-#hud.director-on { --dv-tile: min(calc((100vw - 256px - 42px) / 6), 175px); }
-#hud.director-on .dash, #hud.director-on .damage-map { visibility: hidden; }
-.director { position: absolute; z-index: 2; right: 12px; bottom: 10px; display: grid; grid-template-columns: repeat(6, var(--dv-tile)); gap: 6px; padding: 6px; border-radius: 10px; background: rgba(8, 10, 14, 0.55); pointer-events: auto; }
+/* director mode (M): a column of onboard monitors down the left edge (captions over the
+   pictures), the running order on the right under the minimap and the highlights (incident
+   monitor) in the bottom right corner. The lap timer, dash and damage diagram (your car's)
+   step aside. The pictures are drawn in the 3D view behind these frames (src/director.js). */
+#hud.director-on { --dv-h: calc((100vh - 72px) / 11); }
+#hud.director-on .timing, #hud.director-on .dash, #hud.director-on .damage-map { visibility: hidden; }
+.director { position: absolute; z-index: 2; left: 10px; top: 10px; display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 10px; background: rgba(8, 10, 14, 0.55); pointer-events: auto; }
 .director[hidden] { display: none; }
-.dv-tile { cursor: pointer; border-radius: 6px; overflow: hidden; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--team, #888) 70%, transparent); }
+.dv-tile { position: relative; height: var(--dv-h); aspect-ratio: 16 / 9; cursor: pointer; border-radius: 5px; overflow: hidden; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--team, #888) 70%, transparent); }
 .dv-tile[hidden] { display: none; }
 .dv-tile:hover { box-shadow: inset 0 0 0 2px #fff; }
 .dv-tile.on { box-shadow: inset 0 0 0 3px #fff; }
-.dv-view { aspect-ratio: 16 / 9; }
-.dv-caption { display: flex; gap: 5px; align-items: center; padding: 2px 6px; font-size: 11px; white-space: nowrap; overflow: hidden; background: color-mix(in srgb, var(--team, #333) 55%, #0b0d12); color: #fff; }
+.dv-view { position: absolute; inset: 0; }
+.dv-caption { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 4px; align-items: center; padding: 1px 5px; font-size: 10px; line-height: 1.35; white-space: nowrap; overflow: hidden; background: color-mix(in srgb, var(--team, #333) 60%, rgba(11, 13, 18, 0.6)); color: #fff; }
 .dv-caption span { overflow: hidden; text-overflow: ellipsis; }
-.dv-caption em { margin-left: auto; font-style: normal; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.8); }
+.dv-caption em { margin-left: auto; font-style: normal; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.85); }
 .dv-tile.out { opacity: 0.45; }
 .dv-tile.out em { color: #ff5a3c; font-weight: 700; }
-/* the highlights (incident monitor) sit above the strip on the right */
-#hud.director-on .monitor { left: auto; right: 16px; width: min(30vw, 400px); bottom: calc(2 * (var(--dv-tile) * 0.5625 + 19px) + 40px); }
+/* the running order under the minimap, the highlights in the corner below it */
+#hud.director-on .standings { top: 228px; left: auto; right: 64px; width: 200px; min-width: 0; }
+#hud.director-on .standings li { grid-template-columns: 22px 6px minmax(0, 1fr) 16px auto; }
+#hud.director-on .standings li > span:nth-of-type(2) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hud.director-on .monitor { left: auto; right: 16px; bottom: 16px; width: max(220px, min(28vw, 380px, calc((100vh - 548px) * 16 / 9))); }
+/* which car is in the main view, top middle */
+#director-label { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; align-items: baseline; padding: 6px 14px; border-radius: 999px; background: color-mix(in srgb, var(--team, #333) 55%, rgba(8, 10, 14, 0.8)); color: #fff; font-size: 14px; white-space: nowrap; letter-spacing: 0.04em; }
+#director-label[hidden] { display: none; }
+#director-label small { color: rgba(255, 255, 255, 0.7); font-size: 11px; letter-spacing: 0.08em; }
