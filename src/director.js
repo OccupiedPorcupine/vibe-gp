@@ -14,10 +14,11 @@
 import * as THREE from 'three/webgpu';
 import { texture, uv, vec2 } from 'three/tsl';
 import { MONITOR_LAYER, fitQuad } from './incidents.js';
+import { MOBILE } from './quality.js';
 
 const TILES = 11;
 const RES = [320, 180];
-const PER_FRAME = 2;
+const PER_FRAME = MOBILE ? 1 : 2; // (the light profile: one)
 const FAR = 600; // m: the small monitors see less far than the main view (fewer objects to draw)
 const CAPTION_EVERY = 0.25; // s between caption updates
 // T-cam on the airbox, in the car's body frame, and a point far ahead to look at
@@ -86,9 +87,12 @@ export class Director {
     const order = race ? race.order : [];
     this.tiles.forEach((t, i) => {
       t.entry = order[i] ?? null;
-      if (t.el.hidden !== !t.entry) this.rects = null; // fewer cars: the strip reflows
-      t.el.hidden = !t.entry;
-      t.el.classList.toggle('on', !!t.entry && t.entry === focus);
+      if (t.el.hidden !== !t.entry) {
+        t.el.hidden = !t.entry;
+        this.rects = null; // fewer cars: the strip reflows
+      }
+      const on = !!t.entry && t.entry === focus;
+      if (t.on !== on) t.el.classList.toggle('on', (t.on = on));
     });
     if (time - this.captionAt < CAPTION_EVERY && this.captionAt >= 0) return;
     this.captionAt = time;

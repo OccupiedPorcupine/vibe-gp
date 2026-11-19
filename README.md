@@ -47,7 +47,12 @@ Suzuka's figure of eight crosses over itself: the back straight runs over the se
 
 On a phone or tablet the game shows touch controls (steering pad, gas, brake, menu, camera, reset); phones play in landscape. Tyre and front wing choices are keyboard or desktop HUD only.
 
-Touch devices also get a lighter scene (`src/quality.js`): no crowd, half the trees and no mirror views. Add `?quality=full` or `?quality=mobile` to the URL to force either one.
+Touch devices also get a lighter scene (`src/quality.js`): no crowd, half the trees, no mirror views, smaller shadows and lighter sponsor decal textures. Settings > **Graphics** picks it on any device:
+- *Auto* (the default): the full scene, with the render resolution stepped down while the frame rate stays under about 48 fps, and back up once it's steady (stepping back up waits longer each time a step up doesn't hold).
+- *High*: the full scene at the screen's own resolution (up to 2×), never lowered.
+- *Low*: the light scene at 1× resolution, still adapting, with the full grid of AI cars on a desktop. On Suzuka with a full grid it draws about 1.7 million triangles a frame instead of 5.9 million.
+
+Changing it reloads the game. Add `?quality=full` or `?quality=mobile` to the URL to force either scene.
 
 The gear in the top-right corner opens **Settings**: traction control (traction, stability & steering assists), ABS, damage on / off (off also repairs the car), music and sound effects. Settings are saved between sessions.
 

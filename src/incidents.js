@@ -54,6 +54,7 @@ export function fitQuad(quad, r, camera) {
  * quaternion (4), body pitch, roll and heave (3), front wheel steer (1).
  */
 const F = 11;
+const SCRATCH_Q = new THREE.Quaternion();
 class PoseRecorder {
   constructor() {
     this.n = BUFFER * HZ;
@@ -69,12 +70,14 @@ class PoseRecorder {
     this.cars.clear();
   }
 
-  record(time, cars) {
+  /** Record the cars' poses (field: race entries, carOf: entry -> Car), at most HZ times a second. */
+  record(time, field, carOf) {
     if (time - this.last < 1 / HZ - 1e-6) return;
     this.last = time;
     const i = this.head, o = i * F;
     this.times[i] = time;
-    for (const c of cars) {
+    for (const e of field) {
+      const c = carOf(e);
       let b = this.cars.get(c);
       if (!b) this.cars.set(c, (b = new Float32Array(this.n * F).fill(NaN)));
       const g = c.group, q = g.quaternion;
@@ -116,7 +119,7 @@ class PoseRecorder {
     if (Number.isNaN(b[a]) || Number.isNaN(b[z])) return null; // not recorded then (a new car)
     const l = (k) => b[a + k] + (b[z + k] - b[a + k]) * t;
     out.pos.set(l(0), l(1), l(2));
-    out.quat.set(b[a + 3], b[a + 4], b[a + 5], b[a + 6]).slerp(new THREE.Quaternion(b[z + 3], b[z + 4], b[z + 5], b[z + 6]), t);
+    out.quat.set(b[a + 3], b[a + 4], b[a + 5], b[a + 6]).slerp(SCRATCH_Q.set(b[z + 3], b[z + 4], b[z + 5], b[z + 6]), t);
     out.pitch = l(7);
     out.roll = l(8);
     out.heave = l(9);
@@ -159,6 +162,7 @@ export class IncidentMonitor {
     this.time = 0; // race clock (stops while paused)
     this.inGame = false; // free cam or director mode: show it (it keeps watching for incidents either way)
     this.lookAt = new THREE.Vector3();
+    this._a = new THREE.Vector3(); // scratch
     this._pose = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
     this._saved = [];
   }
@@ -180,7 +184,7 @@ export class IncidentMonitor {
   update(field, dt, on, skip = null) {
     if (!field?.length) return this.hide();
     this.time += dt;
-    if (dt > 0) this.rec.record(this.time, field.map(this.carOf));
+    if (dt > 0) this.rec.record(this.time, field, this.carOf);
     for (const e of field) {
       const kind = this.detect(e, skip);
       if (!kind) continue;
@@ -220,8 +224,8 @@ export class IncidentMonitor {
     const first = s.age <= dt + 1e-9 || s.snap;
     s.snap = false;
     const k = first ? 1 : 1 - Math.exp(-3 * dt);
-    this.cam.position.lerp(new THREE.Vector3(x + s.off.x, y + s.off.y, z + s.off.z), k);
-    this.lookAt.lerp(new THREE.Vector3(x, y + 0.6, z), first ? 1 : 1 - Math.exp(-8 * dt));
+    this.cam.position.lerp(this._a.set(x + s.off.x, y + s.off.y, z + s.off.z), k);
+    this.lookAt.lerp(this._a.set(x, y + 0.6, z), first ? 1 : 1 - Math.exp(-8 * dt));
     this.cam.lookAt(this.lookAt);
   }
 

@@ -3,7 +3,7 @@
 // saved to localStorage so they survive reloads and track changes.
 
 const KEY = 'vibegp.settings';
-const DEFAULTS = { tc: true, abs: true, damage: true, music: true, sound: true, ai: true, aiLevel: 'normal', laps: 5, noResets: false, chaos: 40 };
+const DEFAULTS = { tc: true, abs: true, damage: true, music: true, sound: true, ai: true, aiLevel: 'normal', laps: 5, noResets: false, chaos: 40, graphics: 'auto' };
 
 const TOGGLES = [
   { id: 'tc', name: 'Traction control', desc: 'Traction, stability and steering assists' },
@@ -17,6 +17,7 @@ const TOGGLES = [
   { id: 'laps', name: 'Race length', desc: 'Laps, with AI opponents', choices: [3, 5, 10, 20] },
   // range: a slider [min, max, step]; changes apply at once
   { id: 'chaos', name: 'AI chaos', desc: 'How differently the AI drivers race: low is tidy, high is late braking, divebombs and crashes', range: [0, 100, 5] },
+  { id: 'graphics', name: 'Graphics', desc: 'Auto lowers the resolution while the frame rate is low; Low is the light profile for slower PCs. Reloads the game', choices: ['auto', 'high', 'low'] },
   { id: 'noResets', name: 'No resets', desc: 'A crashed AI car isn\'t put back on the track: it drives itself out, or retires' },
 ];
 
