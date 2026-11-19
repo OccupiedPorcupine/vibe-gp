@@ -1127,9 +1127,10 @@ export class Race {
       const p = e.physics;
       if (settings.damage !== undefined) p.damageOn = settings.damage;
       if (settings.resets !== undefined) e.driver.resets = settings.resets;
-      // retired: parked where it stopped (other cars can still shove it)
+      // retired: abandoned where it stopped, brakes on and the engine off. Another car can
+      // still shove it (collideCars), and its tyres scrub it to a stop
       if (e.retired) {
-        p.step({ hold: true }, dt);
+        p.step({ steer: 0, throttle: 0, brake: 1, parked: true }, dt);
         continue;
       }
       // finished: cruise round at a gentle pace

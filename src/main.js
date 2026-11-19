@@ -25,6 +25,7 @@ import { Sound } from './sound.js';
 import { Race, LEVELS as AI_LEVELS, AIDriver, Entry, racingLine, STYLES } from './ai.js';
 import { FreeCam } from './freecam.js';
 import { IncidentMonitor } from './incidents.js';
+import { Multiview } from './multiview.js';
 import { PauseMenu } from './pause.js';
 
 const SUN_DIR = [0.45, 0.8, 0.35];
@@ -171,6 +172,9 @@ async function start() {
   const carOf = (e) => (e.isPlayer ? car : e.car);
   const monitor = new IncidentMonitor(camera, carOf);
   monitor.onPick = (e) => watch(e);
+  // M: a grid of onboard monitors, one per car (src/multiview.js); click one to watch that car
+  const multiview = new Multiview(camera);
+  multiview.onPick = (e) => watch(e);
   /** V: free camera on / off (C also leaves it, back to the view it left). */
   function toggleFree() {
     if (freecam.active) {
@@ -385,9 +389,12 @@ async function start() {
       // in its box: on the jacks, wheels coming off and on (its crew's doing)
       const out = e.pitStop.box ? crews.out(e.pitStop.box.k) : null;
       // near the main camera or the incident monitor's live one: full detail
+      // (and with the onboard monitors on, near any car: every car is a camera then)
       const mc = monitor.liveCam;
-      const dist = Math.hypot(p.position.x - camera.position.x, p.position.z - camera.position.z);
-      c.setLod(mc ? Math.min(dist, Math.hypot(p.position.x - mc.position.x, p.position.z - mc.position.z)) : dist);
+      let dist = Math.hypot(p.position.x - camera.position.x, p.position.z - camera.position.z);
+      if (mc) dist = Math.min(dist, Math.hypot(p.position.x - mc.position.x, p.position.z - mc.position.z));
+      for (const v of multiview.viewpoints ?? []) if (v !== p.position) dist = Math.min(dist, Math.hypot(p.position.x - v.x, p.position.z - v.z));
+      c.setLod(dist);
       c.update(p, dt, out?.lift ?? 0);
       c.setWing(p.damage, 'car', p);
       c.setDamage(p.damage, p, dt);
@@ -660,6 +667,7 @@ async function start() {
 
     if (menu.visible) {
       monitor.hide();
+      if (multiview.on) multiview.toggle(false);
       menu.handleKeys(input);
       if (freecam.active) freecam.stop();
       // slow orbit behind the menu: close on the car while picking a team, wide for circuits
@@ -697,6 +705,10 @@ async function start() {
       }
       COMPOUND_LIST.forEach((c, i) => input.hit(`Digit${i + 1}`) && pickCompound(c));
       if (input.hit('KeyF')) toggleWing();
+      if (input.hit('KeyM')) {
+        multiview.toggle();
+        timer.flash = { text: multiview.on ? (race ? 'ONBOARD MONITORS · CLICK ONE TO WATCH THAT CAR' : 'ONBOARD MONITORS NEED AI OPPONENTS') : 'ONBOARD MONITORS OFF', until: timer.time + 2 };
+      }
       if (input.hit('KeyB') && freecam.active && !monitor.replayLast(true)) {
         timer.flash = { text: 'NO CRASH TO REPLAY YET', until: timer.time + 1.5 };
       }
@@ -767,10 +779,13 @@ async function start() {
         camera.lookAt(fc.tx, fc.ty, fc.tz);
       }
     }
-    // the incident monitor's picture first (reusing last frame's shadow map), then the view
-    if (monitor.shown) {
+    // the incident monitor's and the onboard monitors' pictures first (reusing last frame's
+    // shadow map), then the view
+    multiview.update(race, now / 1000);
+    if (monitor.shown || multiview.on) {
       sun.shadow.autoUpdate = false;
-      monitor.render(renderer, scene, race ? race.entries.map(carOf) : [car], paused || menu.visible ? 0 : dt);
+      if (monitor.shown) monitor.render(renderer, scene, race ? race.entries.map(carOf) : [car], paused || menu.visible ? 0 : dt);
+      multiview.render(renderer, scene, carOf);
       sun.shadow.autoUpdate = true;
     }
     renderer.render(scene, camera);
