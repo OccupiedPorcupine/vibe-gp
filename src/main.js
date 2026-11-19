@@ -796,7 +796,7 @@ async function start() {
     // the incident monitor's and director mode's pictures first (reusing last frame's shadow
     // map), then the view
     if (menu.visible && director.on) director.toggle(false);
-    director.update(race, now / 1000, watching ?? race?.player);
+    director.update(race, now / 1000, watching ?? race?.player, freecam.active ? 'free cam' : rig.mode);
     if (monitor.shown || director.on) {
       sun.shadow.autoUpdate = false;
       monitor.render(renderer, scene, race ? race.entries.map(carOf) : [car], paused || menu.visible ? 0 : dt);

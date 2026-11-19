@@ -1,10 +1,11 @@
 // Director mode: M turns the game's own view into a broadcast director's monitor wall.
 //  - the main view follows one car (the camera views, C, ride on it; it drives itself
-//    unless you take the wheel with G),
-//  - a strip of small onboard monitors along the bottom, one per car in race order, from
+//    unless you take the wheel with G), named at the top,
+//  - a column of small onboard monitors down the left, one per car in race order, from
 //    the camera on its airbox (T-cam),
-//  - the highlights: the incident monitor's crashes, spins and replays (src/incidents.js),
-//  - the timing tower as the running order.
+//  - the timing tower as the running order, on the right under the minimap,
+//  - the highlights in the bottom right: the incident monitor's crashes, spins and
+//    replays (src/incidents.js).
 // Click a monitor, the highlight or a name in the tower to put that car in the main view.
 //
 // Each small monitor is a render target drawn on a quad hung on the main camera (see
@@ -28,6 +29,7 @@ export class Director {
     this.camera = camera;
     this.on = false;
     this.el = document.getElementById('director');
+    this.label = document.getElementById('director-label');
     this.onPick = null; // (race entry) => void: a monitor was clicked
     this.tiles = [];
     for (let i = 0; i < TILES; i++) {
@@ -64,6 +66,7 @@ export class Director {
   toggle(on = !this.on) {
     this.on = on;
     this.el.hidden = !on;
+    this.label.hidden = !on;
     // (not .director: that's the strip's own class)
     document.getElementById('hud').classList.toggle('director-on', on);
     this.rects = null;
@@ -74,8 +77,11 @@ export class Director {
     }
   }
 
-  /** Which car each monitor shows (race order), and now and then the captions. focus: the car in the main view. */
-  update(race, time, focus) {
+  /**
+   * Which car each monitor shows (race order), and now and then the captions. focus: the car
+   * in the main view; view: its camera view's name.
+   */
+  update(race, time, focus, view = '') {
     if (!this.on) return;
     const order = race ? race.order : [];
     this.tiles.forEach((t, i) => {
@@ -94,6 +100,12 @@ export class Director {
       t.caption.innerHTML = `<b>P${e.position}</b><span>${e.isPlayer ? 'YOU' : e.team.name}</span><em>${state}</em>`;
       t.el.style.setProperty('--team', e.team.ui.primary);
       t.el.classList.toggle('out', e.retired);
+    }
+    if (focus) {
+      const kmh = Math.round(Math.abs(focus.physics.speed) * 3.6);
+      const state = focus.retired ? 'OUT' : focus.physics.onPitLane ? 'IN THE PITS' : `${kmh} km/h`;
+      this.label.innerHTML = `<b>P${focus.position}</b><span>${focus.isPlayer ? 'YOUR CAR' : focus.team.name.toUpperCase()}</span><span>${state}</span><small>${view.toUpperCase()} · C: VIEWS · CLICK A MONITOR TO SWITCH</small>`;
+      this.label.style.setProperty('--team', focus.team.ui.primary);
     }
   }
 
