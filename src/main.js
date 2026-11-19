@@ -172,7 +172,7 @@ async function start() {
       timer.flash = { text: `${rig.mode.toUpperCase()} CAMERA`, until: timer.time + 1.2 };
     } else {
       freecam.start();
-      timer.flash = { text: 'FREE CAM · WASD MOVE · Q/E DOWN/UP · ARROWS OR DRAG TO LOOK · YOUR CAR DRIVES ITSELF', until: timer.time + 4 };
+      timer.flash = { text: 'FREE CAM · WASD FLY · SPACE UP · SHIFT DOWN · DRAG TO LOOK · YOUR CAR DRIVES ITSELF', until: timer.time + 4 };
     }
   }
   // free cam: the driving keys fly the camera, so the player's car drives itself on the AI's
