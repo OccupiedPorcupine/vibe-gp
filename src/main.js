@@ -172,9 +172,10 @@ async function start() {
   const carOf = (e) => (e.isPlayer ? car : e.car);
   const monitor = new IncidentMonitor(camera, carOf);
   monitor.onPick = (e) => watch(e);
-  // M: the director window, a second window with a main screen, the highlights and every
-  // car's onboard monitor (src/director.js)
-  const director = new Director();
+  // M: director mode, the view as a monitor wall: the main view on one car, every car's
+  // onboard monitor and the highlights (src/director.js). Click a monitor to switch cars.
+  const director = new Director(camera);
+  director.onPick = (e) => watch(e);
   /** V: free camera on / off (C also leaves it, back to the view it left). */
   function toggleFree() {
     if (freecam.active) {
@@ -271,7 +272,7 @@ async function start() {
   hud.onCompound = pickCompound;
   // a car clicked in the timing tower: watch it (from free cam, or another one already watched)
   hud.onPick = (e) => {
-    if (freecam.active || watching) watch(e);
+    if (freecam.active || watching || director.on) watch(e);
     else timer.flash = { text: 'PRESS V FOR FREE CAM, THEN CLICK A CAR TO WATCH IT', until: timer.time + 2.5 };
   };
   // front wing change at the next stop: key F in the race, or click the HUD button
@@ -618,8 +619,7 @@ async function start() {
     return `${where} · ${timer.lap === 0 ? 'Out lap' : `Lap ${timer.lap}`} · Best ${formatTime(timer.best)}`;
   }
   // switching tab or window mid-race pauses it
-  // (not when the focus has only gone to the director window: check once it has it)
-  addEventListener('blur', () => setTimeout(() => !document.hasFocus() && !director.hasFocus() && setPaused(true), 120));
+  addEventListener('blur', () => setPaused(true));
   document.addEventListener('visibilitychange', () => document.hidden && setPaused(true));
   // ?track=<id> skips the menu and starts that race directly (team comes from ?team=)
   const urlTrack = TRACKS.find((t) => t.id === new URLSearchParams(location.search).get('track'));
@@ -706,11 +706,20 @@ async function start() {
       COMPOUND_LIST.forEach((c, i) => input.hit(`Digit${i + 1}`) && pickCompound(c));
       if (input.hit('KeyF')) toggleWing();
       if (input.hit('KeyM')) {
-        // drawn by this renderer into the other window's canvases: WebGPU only
-        const text = !renderer.backend.isWebGPUBackend ? 'THE DIRECTOR WINDOW NEEDS WEBGPU'
-          : !race && !director.open ? 'THE DIRECTOR WINDOW NEEDS AI OPPONENTS'
-          : { open: 'DIRECTOR WINDOW OPEN · MOVE IT TO ANOTHER SCREEN', closed: 'DIRECTOR WINDOW CLOSED', blocked: 'ALLOW POP-UPS TO OPEN THE DIRECTOR WINDOW' }[director.toggle()];
-        timer.flash = { text, until: timer.time + 2.5, warn: text.includes('NEEDS') || text.includes('ALLOW') };
+        if (!race) timer.flash = { text: 'DIRECTOR MODE NEEDS AI OPPONENTS', until: timer.time + 2, warn: true };
+        else {
+          director.toggle();
+          if (director.on) {
+            // the main view on a car: the one being watched, or the leader
+            freecam.stop();
+            if (!watching) watch(race.order[0]);
+            rig.initialised = false;
+            timer.flash = { text: 'DIRECTOR MODE · CLICK A MONITOR TO SWITCH CARS · C VIEWS', until: timer.time + 3 };
+          } else {
+            watch(null);
+            timer.flash = { text: 'DIRECTOR MODE OFF', until: timer.time + 1.5 };
+          }
+        }
       }
       if (input.hit('KeyB') && freecam.active && !monitor.replayLast(true)) {
         timer.flash = { text: 'NO CRASH TO REPLAY YET', until: timer.time + 1.5 };
@@ -720,7 +729,8 @@ async function start() {
       const controls = input.state;
       while (acc >= FIXED) {
         startLights.update(FIXED);
-        const own = freecam.active || watching ? autopilotStep(FIXED) : controls;
+        // your car drives itself while you watch (free cam, another car, director mode)
+        const own = freecam.active || watching || director.on ? autopilotStep(FIXED) : controls;
         const held = pitStop.update(physics, own, FIXED);
         physics.step(startLights.holding ? { ...held, hold: true } : held, FIXED);
         damageFlash();
@@ -740,8 +750,8 @@ async function start() {
         acc -= FIXED;
       }
       syncCar(dt);
-      monitor.inGame = freecam.active;
-      monitor.update(race?.entries, dt, freecam.active || director.open, watching ? watching.physics : physics);
+      monitor.inGame = freecam.active || director.on;
+      monitor.update(race?.entries, dt, monitor.inGame, watching ? watching.physics : physics);
       if (freecam.active) freecam.update(input, dt);
       else if (watching) rig.update(watching.physics, dt, watching.car);
       else rig.update(physics, dt, car);
@@ -783,13 +793,14 @@ async function start() {
         camera.lookAt(fc.tx, fc.ty, fc.tz);
       }
     }
-    // the incident monitor's and the director window's pictures first (reusing last frame's
-    // shadow map), then the view
-    director.update(menu.visible ? null : race, now / 1000, monitor);
-    if (monitor.shown || director.open) {
+    // the incident monitor's and director mode's pictures first (reusing last frame's shadow
+    // map), then the view
+    if (menu.visible && director.on) director.toggle(false);
+    director.update(race, now / 1000, watching ?? race?.player);
+    if (monitor.shown || director.on) {
       sun.shadow.autoUpdate = false;
-      monitor.render(renderer, scene, race ? race.entries.map(carOf) : [car], paused || menu.visible ? 0 : dt, director.highlightTarget);
-      director.render(renderer, scene, carOf, paused ? 0 : dt);
+      monitor.render(renderer, scene, race ? race.entries.map(carOf) : [car], paused || menu.visible ? 0 : dt);
+      director.render(renderer, scene, carOf);
       sun.shadow.autoUpdate = true;
     }
     renderer.render(scene, camera);

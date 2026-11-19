@@ -1,5 +1,5 @@
 // Incident monitor: in free cam, a small picture-in-picture window pops up in the corner
-// (and in the director window's highlights screen, src/director.js, when that's open)
+// (and in director mode, src/director.js, as its highlights)
 // whenever a car crashes, spins or goes off, with a camera of its own hovering near that
 // car, so you can watch it while flying somewhere else. Once the car has sorted itself out
 // the window rewinds and replays the incident in slow motion, from a couple of seconds
@@ -157,8 +157,7 @@ export class IncidentMonitor {
     this.lastBad = new Map(); // entry -> { at, off }: its latest crash / spin (a retirement replays it)
     this.last = new Map(); // entry -> { kind: time } it was last picked for that
     this.time = 0; // race clock (stops while paused)
-    this.inGame = false; // show it in the game's own view (free cam), not just the director window
-    this.captionHTML = '';
+    this.inGame = false; // free cam or director mode: show it (it keeps watching for incidents either way)
     this.lookAt = new THREE.Vector3();
     this._pose = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
     this._saved = [];
@@ -274,8 +273,7 @@ export class IncidentMonitor {
     const s = this.shown;
     const who = s.entry.isPlayer ? 'YOUR CAR' : s.entry.team.name.toUpperCase();
     const tag = s.replay ? '<i class="replay">⟲ REPLAY</i>' : '<i class="live">● LIVE</i>';
-    this.captionHTML = `${tag}<b>${KINDS[s.kind].label}</b> · ${who}<small>CLICK TO WATCH</small>`;
-    this.caption.innerHTML = this.captionHTML;
+    this.caption.innerHTML = `${tag}<b>${KINDS[s.kind].label}</b> · ${who}<small>CLICK TO WATCH</small>`;
     this.el.classList.toggle('replaying', !!s.replay);
   }
 
@@ -322,14 +320,13 @@ export class IncidentMonitor {
   /**
    * Draw the monitor's picture (before the main render) and line the quad up with its
    * frame. cars: every Car in the race. In a replay they're put back where they were for
-   * this render, at full detail, and returned afterwards. canvas: the director window's
-   * highlights screen (a CanvasTarget) to draw it into as well, or null.
+   * this render, at full detail, and returned afterwards.
    */
-  render(renderer, scene, cars, dt, canvas = null) {
+  render(renderer, scene, cars, dt) {
     const s = this.shown;
     this.el.hidden = !(s && this.inGame);
     this.quad.visible = !!s && this.inGame;
-    if (!s || (!this.inGame && !canvas)) return;
+    if (!s || !this.inGame) return;
     const saved = this._saved;
     saved.length = 0;
     if (s.replay) {
@@ -352,23 +349,10 @@ export class IncidentMonitor {
         if (c === this.carOf(s.entry)) this.aim(p.pos.x, p.pos.y, p.pos.z, s, dt * SLOW);
       }
     }
-    if (this.inGame) {
-      const prev = renderer.getRenderTarget();
-      renderer.setRenderTarget(this.target);
-      this.cam.aspect = RES[0] / RES[1];
-      this.cam.updateProjectionMatrix();
-      renderer.render(scene, this.cam);
-      renderer.setRenderTarget(prev);
-    }
-    if (canvas) {
-      const prev = renderer.getCanvasTarget();
-      renderer.setCanvasTarget(canvas);
-      const size = canvas.domElement;
-      this.cam.aspect = size.width / Math.max(1, size.height);
-      this.cam.updateProjectionMatrix();
-      renderer.render(scene, this.cam);
-      renderer.setCanvasTarget(prev);
-    }
+    const prev = renderer.getRenderTarget();
+    renderer.setRenderTarget(this.target);
+    renderer.render(scene, this.cam);
+    renderer.setRenderTarget(prev);
     for (const [c, pos, quat, pitch, roll, heave, s0, s1, vis, lod] of saved) {
       c.group.position.copy(pos);
       c.group.quaternion.copy(quat);
@@ -384,7 +368,7 @@ export class IncidentMonitor {
       }
     }
     // the quad, one unit in front of the main camera, covering the frame's picture area
-    if (this.inGame) fitQuad(this.quad, this.view.getBoundingClientRect(), this.camera);
+    fitQuad(this.quad, this.view.getBoundingClientRect(), this.camera);
   }
 
   dispose() {
