@@ -206,6 +206,9 @@ export class CarPhysics {
     // input.hold: up on the jacks in the pit box. The car stays put and the pedals do
     // nothing (the brake would otherwise select reverse at a standstill).
     const yaw0 = this.yaw;
+    // input.parked: a retired car, abandoned with the brakes on. It sits still but a hit can
+    // shove it, the locked tyres scrubbing it to a stop (the brake doesn't select reverse)
+    this.parked = !!input.parked;
     if (input.hold) {
       this.holdStill();
       input = { ...input, throttle: 0, brake: 0 };
@@ -269,6 +272,19 @@ export class CarPhysics {
     this.pitch += (clamp(-this.longAccel * 0.0012, -0.035, 0.035) - this.pitch) * kf;
     this.roll += (clamp(this.latAccel * 0.0012, -0.04, 0.04) - this.roll) * kf;
     this.heave = bump * Math.min(absV / 20, 1);
+    // parked and all but stopped: static friction holds it, even on a steep slope
+    if (this.parked && Math.hypot(this.vel.x, this.vel.z) < 0.3 && Math.abs(this.yawRate) < 0.15) {
+      this.vel.x = this.vel.z = 0;
+      this.yawRate = 0;
+      this.speed = 0;
+      if (this.still) {
+        // it didn't move last step either: undo the slope's nudge within this one
+        this.position.x = this.prevPos.x;
+        this.position.z = this.prevPos.z;
+        this.yaw = yaw0;
+      }
+      this.still = true;
+    } else this.still = false;
     if (input.hold) {
       this.holdStill();
       this.position.x = this.prevPos.x;
@@ -357,7 +373,7 @@ export class CarPhysics {
         if (this.tc) axleTorque = Math.min(axleTorque, (W[2].capX + W[3].capX) * D.rearRadius) * this.tcGain;
       } else brakeForce = Math.max(brakeForce, P.maxBrakeForce * 0.5 * this.throttle); // throttle while rolling back = brake
     } else if (wRear > 1) axleTorque = -P.engineBrake;
-    if (this.brake > 0 && vx <= 0.5 && this.throttle === 0) {
+    if (this.brake > 0 && vx <= 0.5 && this.throttle === 0 && !this.parked) {
       brakeForce = 0; // stopped: the brake key selects reverse
       if (vx > -P.reverseMax) axleTorque = -P.reverseTorque * this.brake;
     }

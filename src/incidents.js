@@ -37,6 +37,18 @@ const KINDS = {
 const angleDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 
 /**
+ * Put a unit quad that hangs on `camera` (one unit in front of it) exactly over the screen
+ * rectangle r (a DOMRect), so a picture drawn on it lines up with an HTML frame.
+ */
+export function fitQuad(quad, r, camera) {
+  const W = innerWidth, H = innerHeight;
+  const h = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), w = h * camera.aspect;
+  const cx = ((r.left + r.width / 2) / W) * 2 - 1, cy = 1 - ((r.top + r.height / 2) / H) * 2;
+  quad.position.set(cx * w, cy * h, -1);
+  quad.scale.set((r.width / W) * 2 * w, (r.height / H) * 2 * h, 1);
+}
+
+/**
  * The last BUFFER seconds of every car's pose. Per sample and car: group position (3) and
  * quaternion (4), body pitch, roll and heave (3), front wheel steer (1).
  */
@@ -352,13 +364,7 @@ export class IncidentMonitor {
       }
     }
     // the quad, one unit in front of the main camera, covering the frame's picture area
-    const r = this.view.getBoundingClientRect();
-    const cam = this.camera;
-    const W = innerWidth, H = innerHeight;
-    const h = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2), w = h * cam.aspect;
-    const cx = ((r.left + r.width / 2) / W) * 2 - 1, cy = 1 - ((r.top + r.height / 2) / H) * 2;
-    this.quad.position.set(cx * w, cy * h, -1);
-    this.quad.scale.set((r.width / W) * 2 * w, (r.height / H) * 2 * h, 1);
+    fitQuad(this.quad, this.view.getBoundingClientRect(), this.camera);
   }
 
   dispose() {
