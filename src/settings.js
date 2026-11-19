@@ -13,7 +13,7 @@ const TOGGLES = [
   { id: 'sound', name: 'Sound effects', desc: 'Engine, wind, tyres and crashes' },
   { id: 'ai', name: 'AI opponents', desc: 'Race the other ten teams (restarts the race)' },
   // choices: a click steps to the next value
-  { id: 'aiLevel', name: 'AI difficulty', desc: 'How hard the other cars push', choices: ['easy', 'normal', 'hard'] },
+  { id: 'aiLevel', name: 'AI difficulty', desc: 'How hard the other cars push', choices: ['easy', 'normal', 'hard', 'expert'] },
   { id: 'laps', name: 'Race length', desc: 'Laps, with AI opponents', choices: [3, 5, 10, 20] },
   { id: 'noResets', name: 'No resets', desc: 'A crashed AI car isn\'t put back on the track: it drives itself out, or retires' },
 ];

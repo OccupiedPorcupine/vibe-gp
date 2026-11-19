@@ -1,6 +1,6 @@
 // Headless AI race: every car (the "player" too) driven by the AI on the real physics.
 //
-//   node scripts/ai-check.mjs <trackId> [laps] [opponents] [difficulty]
+//   node scripts/ai-check.mjs <trackId> [laps] [opponents] [level: easy|normal|hard|expert]
 //   NORESETS=1 node scripts/ai-check.mjs ...   (no-resets mode: stuck cars recover or retire)
 //
 // Prints each car's best lap, finishing order, wall contacts, off-track time and respawns.
@@ -12,22 +12,22 @@ const { TRACKS } = await import('../src/tracks/index.js');
 const { TrackPath } = await import('../src/trackPath.js');
 const { CarPhysics } = await import('../src/physics.js');
 const { TEAMS } = await import('../src/teams.js');
-const { Race, AIDriver, teamPace } = await import('../src/ai.js');
+const { Race, AIDriver, teamPace, CONTACTS } = await import('../src/ai.js');
 const { formatTime } = await import('../src/race.js');
 
 const id = process.argv[2] || 'suzuka';
 const laps = +(process.argv[3] || 3);
 const opponents = +(process.argv[4] ?? 10);
-const difficulty = +(process.argv[5] ?? 1); // 0.92 easy, 1 normal, 1.045 hard
+const level = process.argv[5] ?? 'normal';
 const def = TRACKS.find((t) => t.id === id);
 const P = new TrackPath(def);
 const playerTeam = TEAMS[TEAMS.length - 1];
 const player = new CarPhysics(P, P.gridPose(0));
 const t0 = performance.now();
-const race = new Race(P, playerTeam, player, TEAMS, { opponents, laps, difficulty });
+const race = new Race(P, playerTeam, player, TEAMS, { opponents, laps, level });
 console.log(`racing line built in ${(performance.now() - t0).toFixed(0)} ms; ${race.entries.length} cars, ${laps} laps of ${def.name} (${P.length.toFixed(0)} m)`);
 player.reset(race.playerGrid());
-race.player.driver = new AIDriver(race.player, race.line, { pace: teamPace(TEAMS.length - 1), seed: 99 });
+race.player.driver = new AIDriver(race.player, race.line, { pace: teamPace(TEAMS.length - 1, level), seed: 99 });
 
 const stats = new Map(race.entries.map((e) => [e, { wall: 0, off: 0, respawn: 0, lapStart: null, best: Infinity, lastLap: 0 }]));
 const origRespawn = AIDriver.prototype.respawn;
@@ -59,6 +59,7 @@ while (race.finishOrder.length < race.entries.filter((e) => !e.retired).length &
   }
 }
 const ms = performance.now() - tSim;
+console.log(`car-to-car contacts: ${CONTACTS.touches} (hard, > 5 m/s: ${CONTACTS.hard})`);
 console.log(`simulated ${(race.time).toFixed(0)} s in ${(ms / 1000).toFixed(1)} s (${((ms / frames) * 1000 / race.entries.length).toFixed(0)} µs per car-step)`);
 for (const e of race.order) {
   const s = stats.get(e);
