@@ -9,10 +9,14 @@
 // - collideCars(): car-to-car contact. Each car is three circles along its length; overlaps
 //   are pushed apart and the closing speed is exchanged (equal masses), with some spin and
 //   (if damage is on) damage to both cars.
+// - STYLES: every AI driver races in a style (aggressive, balanced, smooth or rookie): how
+//   late it brakes, how fast it takes corners, the gaps it leaves, how keen it is to pass,
+//   how often it makes a mistake and how it looks after its tyres. Each starts on its own
+//   tyre compound and drives to the grip it has (softs quick early, fading as they wear).
 // - Race: the whole field (player + AI): grid, progress along the lap, positions, laps and
 //   the chequered flag.
 import { CarPhysics, PARAMS } from './physics.js';
-import { TYRE } from './tyres.js';
+import { TYRE, COMPOUNDS, tempGrip } from './tyres.js';
 import { AI_PACE } from './tracks/aipace.js';
 
 const LINE_MARGIN = 1.5; // m between the racing line and the edge of the asphalt (car half width + a bit)
@@ -94,22 +98,30 @@ export function racingLine(P, { gripUse = 1.15, learned = AI_PACE[P.def?.id] } =
    * backwards. The braking uses the grip there is at each speed (downforce: about three
    * times as much at 300 km/h as at walking pace), times `brakeUse`.
    */
-  function profile(scale = null, brakeUse = 0.86) {
-    for (let i = 0; i < N; i++) vlim[i] = Math.min(vcap[i], vc[i] * (scale ? scale[segOf(i)] : 1));
+  const variants = new Map(); // per-style / per-grip copies of the profile (see variant)
+  let current = null; // the scales and braking the profile was last built with
+  function profile(scale = null, brakeUse = 0.86, out = null, corner = 1) {
+    if (!out) {
+      // the copies follow a rebuilt profile (scripts/ai-learn.mjs tries out new scales)
+      variants.clear();
+      current = { scale, brake: brakeUse };
+    }
+    const v = out ?? vlim;
+    for (let i = 0; i < N; i++) v[i] = Math.min(vcap[i], vc[i] * corner * (scale ? scale[segOf(i)] : 1));
     // the slowest point of a corner governs the few metres around it (hairpin apexes are
     // sharper than a few samples can measure)
     const w = Math.max(1, Math.round(8 / P.ds));
-    const src = Float64Array.from(vlim);
+    const src = Float64Array.from(v);
     for (let i = 0; i < N; i++) {
       let m = src[i];
       for (let k = -w; k <= w; k++) m = Math.min(m, src[P.wrap(i + k)]);
-      vlim[i] = m;
+      v[i] = m;
     }
     const decel = (v) => brakeUse * (PARAMS.brakeDecel + TYRE.muLongScale * PARAMS.downforceGrip * v * v);
     for (let pass = 0; pass < 2; pass++) {
       for (let i = N - 1; i >= 0; i--) {
         const j = P.wrap(i + 1);
-        vlim[i] = Math.min(vlim[i], Math.sqrt(vlim[j] ** 2 + 2 * decel(vlim[j]) * seg[i]));
+        v[i] = Math.min(v[i], Math.sqrt(v[j] ** 2 + 2 * decel(v[j]) * seg[i]));
       }
     }
   }
@@ -119,12 +131,30 @@ export function racingLine(P, { gripUse = 1.15, learned = AI_PACE[P.def?.id] } =
     const i = Math.floor(f) % N;
     return arr[i];
   };
-  return {
+  const vAtIn = (arr, s) => {
+    const f = (((s % P.length) + P.length) % P.length) / P.ds;
+    const i = Math.floor(f) % N, j = P.wrap(i + 1), t = f - Math.floor(f);
+    return arr[i] + (arr[j] - arr[i]) * t;
+  };
+  const line = {
     lat,
     vlim,
     segments: K,
     segOf,
     profile,
+    /**
+     * The same line with its own speed profile for a driving style: corner speeds × corner,
+     * braking × brake (a late braker's > 1). Shared by every driver with the same numbers.
+     */
+    variant(corner = 1, brake = 1) {
+      const key = `${corner}|${brake}`;
+      if (!variants.has(key)) {
+        const arr = new Float64Array(N);
+        profile(current.scale, current.brake * brake, arr, corner);
+        variants.set(key, { ...line, vlim: arr, vAt: (s) => vAtIn(arr, s) });
+      }
+      return variants.get(key);
+    },
     /** Room for a car at s: { left, right } lateral limits (right is negative). */
     limits: (s) => ({ left: at(hi, s) + 0.3, right: at(lo, s) - 0.3 }),
     /** |curvature| of the line at s (1/m), the tightest within `ahead` metres. */
@@ -139,11 +169,10 @@ export function racingLine(P, { gripUse = 1.15, learned = AI_PACE[P.def?.id] } =
       return lat[i] + (lat[j] - lat[i]) * t;
     },
     vAt(s) {
-      const f = (((s % P.length) + P.length) % P.length) / P.ds;
-      const i = Math.floor(f) % N, j = P.wrap(i + 1), t = f - Math.floor(f);
-      return vlim[i] + (vlim[j] - vlim[i]) * t;
+      return vAtIn(vlim, s);
     },
   };
+  return line;
 }
 
 /** Damage an AI car can't race on (no-resets mode): broken suspension or a dead engine. */
@@ -159,11 +188,34 @@ function lapDelta(s1, s0, L) {
   return d;
 }
 
+/**
+ * Driving styles. corner / brake: corner speeds and braking on the speed profile (a late
+ * braker's brake > 1: it brakes harder, so later); gap: following distance; room: extra
+ * (or less) side clearance, m; pass: how much quicker it must be closing (m/s) before it
+ * goes for a pass; mistakes: corners got wrong per km, and snap: the share of those that
+ * are a snap of oversteer on the way out rather than running wide (see drive); late: how
+ * close it leaves an emergency stop; tyreCare: how much of its tyres' wear it allows for (1:
+ * all of it; less: it keeps pushing on worn tyres and slides); wobble: pace variation;
+ * tyres: chances of starting on soft / medium / hard.
+ */
+export const STYLES = {
+  aggressive: { name: 'Aggressive', corner: 1.015, brake: 1.1, gap: 0.65, room: -0.25, pass: 0.6, mistakes: 0.3, snap: 0.4, tyreCare: 0.4, wobble: 1.2, late: 0.85, tyres: [0.55, 0.4, 0.05] },
+  balanced: { name: 'Balanced', corner: 1, brake: 1, gap: 1, room: 0, pass: 1.5, mistakes: 0.07, snap: 0.25, tyreCare: 0.8, wobble: 1, late: 1, tyres: [0.3, 0.55, 0.15] },
+  smooth: { name: 'Smooth', corner: 0.99, brake: 0.95, gap: 1.3, room: 0.3, pass: 2.5, mistakes: 0.02, snap: 0.2, tyreCare: 1, wobble: 0.6, late: 1.1, tyres: [0.15, 0.55, 0.3] },
+  rookie: { name: 'Rookie', corner: 1.005, brake: 1.06, gap: 0.85, room: 0, pass: 1, mistakes: 0.45, snap: 0.5, tyreCare: 0.5, wobble: 2.5, late: 0.95, tyres: [0.4, 0.5, 0.1] },
+};
+const SOFT_USE = 0.4; // share of a grippier compound's extra grip the AI drives to (see tyreGrip)
+// a field's mix of styles, dealt in a shuffled order
+const STYLE_DECK = ['aggressive', 'balanced', 'smooth', 'aggressive', 'balanced', 'rookie', 'balanced', 'smooth', 'aggressive', 'balanced'];
+
 /** Computer driver for one car. */
 export class AIDriver {
-  constructor(entry, line, { pace = 0.95, reaction = 0.25, seed = 1 } = {}) {
+  constructor(entry, line, { pace = 0.95, reaction = 0.25, seed = 1, style = STYLES.balanced } = {}) {
     this.entry = entry;
-    this.line = line;
+    this.style = style;
+    this.base = line; // the race's line; this.line: its speed profile for this driver and tyres
+    this.line = line.variant ? line.variant(style.corner, style.brake) : line;
+    this.mistake = null; // { from, len, boost }: a braking point missed (see drive)
     this.pace = pace; // share of the line's profile speed this driver carries
     this.reaction = reaction; // s from green to the throttle
     this.offset = 0; // extra lateral offset for traffic (m, + = left)
@@ -194,15 +246,51 @@ export class AIDriver {
     this.wobbleT -= dt;
     if (this.wobbleT <= 0) {
       this.wobbleT = 2 + this.rand() * 4;
-      this.wobbleGoal = (this.rand() - 0.5) * 0.02;
+      this.wobbleGoal = (this.rand() - 0.5) * 0.02 * this.style.wobble;
     }
     this.wobble += ((this.wobbleGoal ?? 0) - this.wobble) * Math.min(1, dt * 0.5);
 
     const s = car.trackS;
     const v = Math.max(0, car.speed);
     const lineLat = this.line.latAt(s);
+    const st = this.style;
+    // the speed profile for this style on the grip its tyres have now (compound, temperature,
+    // wear), in 2% steps: corners and braking both scale with grip. (Scaling the speeds
+    // alone isn't enough: at speed the braking comes mostly from downforce, which a lower
+    // target speed doesn't take away, so low-grip cars braked too late and slid off.)
+    if (this.base.variant) {
+      const g = Math.round(this.tyreGrip(car) * 50) / 50;
+      this.line = this.base.variant(st.corner * Math.sqrt(g), st.brake * g);
+    }
     // the target a little ahead: the brake pedal takes a moment to come on
     let vt = this.line.vAt(s + 3 + v * 0.08) * (this.pace + this.wobble);
+    // mistakes: now and then, heading into a braking zone, the driver gets the corner wrong.
+    // 'wide': misses the braking point, carries too much speed in and misses the apex
+    // (less steering through the corner), running wide, often across the grass or into the
+    // gravel. 'snap': too much throttle too early on the way out, traction control off: the
+    // rear steps out, sometimes all the way round.
+    if (this.mistake) {
+      if (lapDelta(s, this.mistake.from, L) > this.mistake.len) this.mistake = null;
+    } else if (v > 30 && sinceGreen > 10 && this.line.vAt(s + 30 + v * 0.6) < v - 12) {
+      // about a third of a lap is braking zones, hence the 3
+      if (this.rand() < st.mistakes * 3 * (v * dt) / 1000) {
+        // from here through the braking zone to the slowest point of the corner
+        let len = 0, vmin = Infinity;
+        for (let d = 0; d < 350; d += 5) {
+          const vd = this.line.vAt(s + d);
+          if (vd < vmin) { vmin = vd; len = d; }
+        }
+        const snap = this.rand() < st.snap;
+        this.mistake = snap
+          ? { kind: 'snap', from: s, apex: len, len: len + 30 + this.rand() * 25 }
+          : { kind: 'wide', from: s, apex: len, len: len + 70, boost: 1.04 + this.rand() * 0.09, under: 0.35 + this.rand() * 0.25 };
+        this.mistakes = (this.mistakes ?? 0) + 1;
+      }
+    }
+    // past the car's real limit (the profile is about it) whatever its pace: on Easy too
+    const m = this.mistake;
+    const into = m ? lapDelta(s, m.from, L) : 0;
+    if (m?.kind === 'wide' && into < m.apex) vt = Math.max(vt, this.line.vAt(s + 3 + v * 0.08) * m.boost);
     // the car's own damage: no point charging at the limit with half a front wing
     vt *= 1 - 0.12 * Math.min(1, car.damage.wing[0] + car.damage.wing[1]);
 
@@ -223,7 +311,7 @@ export class AIDriver {
       if (d <= -6 || d >= range) continue;
       const dl = op.lateral - car.lateral;
       // a human driver can brake or swerve without warning: more room around the player
-      const extra = o.isPlayer ? 0.4 : 0;
+      const extra = (o.isPlayer ? 0.4 : 0) + st.room;
       // where our (offset) line will be when we get to it: the line can swing across the
       // road between here and there (Eau Rouge), so judge it there, not here
       const planned = this.line.latAt(s + d) + this.offset;
@@ -239,16 +327,16 @@ export class AIDriver {
         if (closing > 15 && d < closing * 3) urgent = true; // a slow or stopped car ahead
         // about to hit it: closer than a car's length plus the distance to shed the closing
         // speed (at ~2 g) and a moment to react. Brake, and swerve to the side with room.
-        if (Math.abs(dl) < 2.4 && closing > 2 && d < 5.5 + (closing * closing) / 40 + closing * 0.15 && (!this.closeBehind || d < this.closeBehind.d)) {
+        if (Math.abs(dl) < 2.4 && closing > 2 && d < (5.5 + (closing * closing) / 40 + closing * 0.15) * st.late && (!this.closeBehind || d < this.closeBehind.d)) {
           this.closeBehind = { d, lat: op.lateral };
         }
         // don't run into it: be at its speed by the time we're a following gap behind,
         // unless we'll already be clear of it by the time we get there
-        const gap = d - (7 + v * 0.15 + startGap + (o.isPlayer ? 3 : 0));
+        const gap = d - ((7 + v * 0.15) * st.gap + startGap + (o.isPlayer ? 3 : 0));
         const safe = Math.sqrt(opV ** 2 + 2 * PARAMS.brakeDecel * 0.6 * Math.max(0, gap));
         if (Math.abs(op.lateral - planned) < width || d < 12) follow = Math.min(follow, gap <= 0 ? opV - 2 : safe);
         // the nearest car we're catching is the one to pass
-        const needPass = closing > 1.5 || (vt > opV + 2 && d < 20);
+        const needPass = closing > st.pass || (vt > opV + 2 && d < 20);
         if (needPass && d < blockerD) {
           blocker = op;
           blockerD = d;
@@ -346,15 +434,46 @@ export class AIDriver {
       if (r) return r;
     }
 
+    // traction control goes back on after a snap
+    const tc = this.tcOff ? (this.tcOff = false, { tc: true }) : {};
     if (this.brakeNow) {
       this.brakeNow = false;
-      return { steer: Math.max(-1, Math.min(1, err * 3.5)), throttle: 0, brake: 1 };
+      return { steer: Math.max(-1, Math.min(1, err * 3.5)), throttle: 0, brake: 1, ...tc };
     }
+    if (m?.kind === 'snap' && into > m.apex - 5) {
+      this.tcOff = true;
+      return { steer: Math.max(-1, Math.min(1, err * 3.5)), throttle: 1, brake: 0, tc: false };
+    }
+    const gain = m?.kind === 'wide' && into > m.apex * 0.6 ? 3.5 * m.under : 3.5;
     return {
-      steer: Math.max(-1, Math.min(1, err * 3.5)),
+      steer: Math.max(-1, Math.min(1, err * gain)),
       throttle: v < vt ? 1 : 0,
       brake: v > vt + 0.3 ? Math.min(1, (v - vt) / 1.5) : 0,
+      ...tc,
     };
+  }
+
+  /**
+   * The tyres' grip against the mediums the profile was learned on: the compound's, less
+   * what the wear has cost as far as this driver allows for it.
+   */
+  tyreGrip(car) {
+    const c = car.compound ?? COMPOUNDS.medium;
+    let wear = 0, cold = Infinity;
+    for (const w of car.wheels) {
+      wear += w.wear / 4;
+      cold = Math.min(cold, w.temp);
+    }
+    // and their temperature, against what a medium would have at the same temperature
+    // (hards take longer to come in, softs grip sooner). Below its window a compound with
+    // less grip than the medium is driven with extra care: in the races, cold hards slid
+    // off far more than that difference alone predicts.
+    let warm = tempGrip(cold, c.tOpt) / tempGrip(cold, COMPOUNDS.medium.tOpt);
+    if (warm < 1) warm **= 1 + 2 * Math.min(1, Math.max(0, (c.tOpt - 10 - cold) / 25));
+    // more grip than a medium: only some of it is used (all of it made the softs runaway
+    // leaders, and traffic is where the extra speed hurts)
+    if (warm * c.grip > 1) warm = (1 + (warm * c.grip - 1) * SOFT_USE) / c.grip;
+    return c.grip * warm * (1 - TYRE.wearGripLoss * wear * this.style.tyreCare);
   }
 
   /**
@@ -585,7 +704,7 @@ export function teamPace(index, level = 'normal') {
  * in pace order with the player at the back (or `playerSlot`).
  */
 export class Race {
-  constructor(path, playerTeam, playerPhysics, teams, { opponents = 10, laps = 5, level = 'normal', playerSlot = null } = {}) {
+  constructor(path, playerTeam, playerPhysics, teams, { opponents = 10, laps = 5, level = 'normal', playerSlot = null, seed = (Math.random() * 2 ** 31) | 0 } = {}) {
     this.path = path;
     this.laps = laps;
     this.line = racingLine(path);
@@ -594,6 +713,17 @@ export class Race {
     const rivals = teams.filter((t) => t.id !== playerTeam.id).slice(0, opponents);
     const n = rivals.length + 1;
     const pSlot = playerSlot ?? n - 1;
+    // deal out the driving styles and starting tyres (a new mix every race)
+    const rand = mulberry32(seed);
+    const deck = STYLE_DECK.slice(0, rivals.length);
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+    const pickTyre = (w) => {
+      const r = rand();
+      return r < w[0] ? COMPOUNDS.soft : r < w[0] + w[1] ? COMPOUNDS.medium : COMPOUNDS.hard;
+    };
     this.entries = [];
     let k = 0;
     for (let slot = 0; slot < n; slot++) {
@@ -607,6 +737,8 @@ export class Race {
       const physics = new CarPhysics(path, path.gridPose(slot));
       const e = new Entry({ team, physics });
       e.slot = slot;
+      e.style = STYLES[deck[k - 1] ?? 'balanced'];
+      physics.compound = pickTyre(e.style.tyres); // kept through resets and respawns
       e.retire = () => {
         if (e.retired || e.finished) return;
         e.retired = true;
@@ -616,7 +748,8 @@ export class Race {
       e.driver = new AIDriver(e, this.line, {
         pace: teamPace(ti, level),
         reaction: (([a, b]) => a + (b - a) * (((slot * 37) % 10) / 9))((LEVELS[level] ?? LEVELS.normal).reaction),
-        seed: slot * 7919 + 13,
+        seed: slot * 7919 + 13 + seed,
+        style: e.style,
       });
       this.entries.push(e);
     }
@@ -655,6 +788,7 @@ export class Race {
         e.driver.rec = null;
         e.driver.tries = 0;
         e.driver.parking = null;
+        e.driver.mistake = null;
       }
     }
     this.rank();

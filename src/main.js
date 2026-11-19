@@ -22,7 +22,8 @@ import { PitCrews } from './pitCrew.js';
 import { COMPOUND_LIST } from './tyres.js';
 import { DAMAGE } from './damage.js';
 import { Sound } from './sound.js';
-import { Race, LEVELS as AI_LEVELS } from './ai.js';
+import { Race, LEVELS as AI_LEVELS, AIDriver, Entry, racingLine, STYLES } from './ai.js';
+import { FreeCam } from './freecam.js';
 import { PauseMenu } from './pause.js';
 
 const SUN_DIR = [0.45, 0.8, 0.35];
@@ -162,6 +163,33 @@ async function start() {
   const input = new Input();
   bindTouch(input);
   const rig = new CameraRig(camera);
+  const freecam = new FreeCam(camera, renderer.domElement);
+  /** V: free camera on / off (C also leaves it, back to the view it left). */
+  function toggleFree() {
+    if (freecam.active) {
+      freecam.stop();
+      rig.initialised = false;
+      timer.flash = { text: `${rig.mode.toUpperCase()} CAMERA`, until: timer.time + 1.2 };
+    } else {
+      freecam.start();
+      timer.flash = { text: 'FREE CAM · WASD MOVE · Q/E DOWN/UP · ARROWS OR DRAG TO LOOK · YOUR CAR DRIVES ITSELF', until: timer.time + 4 };
+    }
+  }
+  // free cam: the driving keys fly the camera, so the player's car drives itself on the AI's
+  // line (a race's, or one worked out for the circuit the first time it's needed)
+  let autopilot = null;
+  let soloLine = null;
+  function autopilotStep(dt) {
+    if (!autopilot || autopilot.race !== race || autopilot.physics !== physics || autopilot.path !== track.path) {
+      if (!race && soloLine?.path !== track.path) soloLine = { path: track.path, line: racingLine(track.path) };
+      const entry = race?.player ?? new Entry({ team: car.team, physics, isPlayer: true });
+      autopilot = {
+        race, physics, path: track.path, field: race?.entries ?? [entry],
+        driver: new AIDriver(entry, race?.line ?? soloLine.line, { pace: 0.9, reaction: 0, seed: 4242, style: { ...STYLES.smooth, mistakes: 0 } }),
+      };
+    }
+    return autopilot.driver.drive(autopilot.field, race ? race.sinceGreen : startLights.holding ? 0 : 99, dt);
+  }
   const timer = new LapTimer();
   const startLights = new StartLights();
   const hud = new Hud();
@@ -538,6 +566,7 @@ async function start() {
 
     if (menu.visible) {
       menu.handleKeys(input);
+      if (freecam.active) freecam.stop();
       // slow orbit behind the menu: close on the car while picking a team, wide for circuits
       closeUp += ((menu.row === 'team' ? 1 : 0) - closeUp) * Math.min(dt * 2.5, 1);
       orbit += dt * (0.12 + closeUp * 0.18);
@@ -554,7 +583,11 @@ async function start() {
       syncCar(0);
     } else {
       if (input.hit('Escape') || input.hit('KeyP')) setPaused(true);
-      if (input.hit('KeyC')) rig.next();
+      if (input.hit('KeyV')) toggleFree();
+      if (input.hit('KeyC')) {
+        if (freecam.active) toggleFree();
+        else rig.next();
+      }
       if (input.hit('KeyR')) resetCar();
       COMPOUND_LIST.forEach((c, i) => input.hit(`Digit${i + 1}`) && pickCompound(c));
       if (input.hit('KeyF')) toggleWing();
@@ -563,7 +596,7 @@ async function start() {
       const controls = input.state;
       while (acc >= FIXED) {
         startLights.update(FIXED);
-        const held = pitStop.update(physics, controls, FIXED);
+        const held = pitStop.update(physics, freecam.active ? autopilotStep(FIXED) : controls, FIXED);
         physics.step(startLights.holding ? { ...held, hold: true } : held, FIXED);
         damageFlash();
         if (pitStop.released) timer.flash = { text: `PIT STOP ${pitStop.lastStop.toFixed(1)} s`, until: timer.time + 2.5 };
@@ -578,10 +611,12 @@ async function start() {
         acc -= FIXED;
       }
       syncCar(dt);
-      rig.update(physics, dt, car);
+      if (freecam.active) freecam.update(input, dt);
+      else rig.update(physics, dt, car);
     }
+    const camMode = freecam.active ? 'free' : rig.mode;
     // driver view: hide the helmet the eye sits in and run the steering wheel's display
-    const driverView = !menu.visible && rig.mode === 'driver';
+    const driverView = !menu.visible && camMode === 'driver';
     const me = race?.player;
     car.setDriverView(driverView, driverView && {
       car: physics,
@@ -598,9 +633,9 @@ async function start() {
     floods.update(camera.position, track?.floodStrength);
 
     boxMarker.update(dt, pitStop, !menu.visible);
-    hud.update(physics, timer, rig.mode, pitStop);
+    hud.update(physics, timer, camMode, pitStop);
     hud.updateRace(now / 1000);
-    sound.update(physics, { camera, mode: rig.mode, racing: !menu.visible && !paused });
+    sound.update(physics, { camera, mode: camMode, racing: !menu.visible && !paused });
     if (import.meta.env.DEV) {
       window.__game = { rig, race, physics, timer, startLights, track, pitStop, crews, loadTrack, TRACKS, menu, car, setTeam, TEAMS, scene, sun, floods, renderer, sound };
       // automated screenshots can pin the camera: window.__fixedCam = { x, y, z, tx, ty, tz }

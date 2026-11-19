@@ -24,7 +24,7 @@ const P = new TrackPath(def);
 const playerTeam = TEAMS[TEAMS.length - 1];
 const player = new CarPhysics(P, P.gridPose(0));
 const t0 = performance.now();
-const race = new Race(P, playerTeam, player, TEAMS, { opponents, laps, level });
+const race = new Race(P, playerTeam, player, TEAMS, { opponents, laps, level, seed: +(process.env.SEED ?? 1) });
 console.log(`racing line built in ${(performance.now() - t0).toFixed(0)} ms; ${race.entries.length} cars, ${laps} laps of ${def.name} (${P.length.toFixed(0)} m)`);
 player.reset(race.playerGrid());
 race.player.driver = new AIDriver(race.player, race.line, { pace: teamPace(TEAMS.length - 1, level), seed: 99 });
@@ -63,5 +63,5 @@ console.log(`car-to-car contacts: ${CONTACTS.touches} (hard, > 5 m/s: ${CONTACTS
 console.log(`simulated ${(race.time).toFixed(0)} s in ${(ms / 1000).toFixed(1)} s (${((ms / frames) * 1000 / race.entries.length).toFixed(0)} µs per car-step)`);
 for (const e of race.order) {
   const s = stats.get(e);
-  console.log(`P${String(e.position).padEnd(3)} ${e.team.name.padEnd(13)} grid ${String(e.slot + 1).padStart(2)}  ${e.finished ? formatTime(e.finishTime) : e.retired ? 'RETIRED  ' : 'DNF      '}  best ${s.best < Infinity ? formatTime(s.best) : '--'}  pace ${e.driver.pace.toFixed(3)}  wall ${String(s.wall).padStart(4)}  off ${(s.off * dt).toFixed(1).padStart(5)} s  respawns ${s.respawn}`);
+  console.log(`P${String(e.position).padEnd(3)} ${e.team.name.padEnd(13)} grid ${String(e.slot + 1).padStart(2)}  ${e.finished ? formatTime(e.finishTime) : e.retired ? 'RETIRED  ' : 'DNF      '}  best ${s.best < Infinity ? formatTime(s.best) : '--'}  pace ${e.driver.pace.toFixed(3)} ${(e.style?.name ?? '').padEnd(10)} ${e.physics.compound.letter}  wall ${String(s.wall).padStart(4)}  off ${(s.off * dt).toFixed(1).padStart(5)} s  respawns ${s.respawn}  mistakes ${e.driver?.mistakes ?? 0}`);
 }

@@ -174,9 +174,10 @@ function smokeMaterial() {
 }
 
 let aiTyres = null;
+const TYRE_COLORS = {}; // compound id -> THREE.Color, for the AI's per-tyre colour
 function aiTyreMaterials() {
   if (!aiTyres) {
-    aiTyres = { front: tyreMaterial(CAR_DIMS.frontRadius), rear: tyreMaterial(CAR_DIMS.rearRadius) };
+    aiTyres = { front: tyreMaterial(CAR_DIMS.frontRadius, undefined, { perObject: true }), rear: tyreMaterial(CAR_DIMS.rearRadius, undefined, { perObject: true }) };
     for (const m of Object.values(aiTyres)) SHARED.add(m);
   }
   return aiTyres;
@@ -860,6 +861,7 @@ export class Car {
     // (the sidewall lettering texture is shared by every tyre, so it is not disposed with the car)
     const tyreMats = this.ai ? aiTyreMaterials() : { front: tyreMaterial(d.frontRadius), rear: tyreMaterial(d.rearRadius) };
     this.tyreMats = Object.values(tyreMats);
+    this.tyreMeshes = [];
     this.compound = null;
     const rimMat = this.common.rim;
     const brakeMat = this.common.brake;
@@ -875,7 +877,9 @@ export class Car {
       this.group.add(steer); // unsprung: wheels don't pitch/roll with the body
       const spin = new THREE.Group();
       steer.add(spin);
-      spin.add(new THREE.Mesh(tyreGeometry(c.r, c.w, 0.63, 96), c.front ? tyreMats.front : tyreMats.rear));
+      const tyre = new THREE.Mesh(tyreGeometry(c.r, c.w, 0.63, 96), c.front ? tyreMats.front : tyreMats.rear);
+      this.tyreMeshes.push(tyre);
+      spin.add(tyre);
       // 18" rim: barrel just inside the tyre bead, flat aero cover on the outer face,
       // brake assembly visible on the inner face
       const sx = Math.sign(c.x);
@@ -946,7 +950,9 @@ export class Car {
   setCompound(compound) {
     if (compound === this.compound) return;
     this.compound = compound;
-    for (const m of this.tyreMats) m.userData.compound.value.setHex(compound.hex);
+    // AI cars share their tyre materials: the colour goes on each tyre instead
+    if (this.ai) for (const t of this.tyreMeshes) t.userData.tyreColor = (TYRE_COLORS[compound.id] ??= new THREE.Color(compound.hex));
+    else for (const m of this.tyreMats) m.userData.compound.value.setHex(compound.hex);
   }
 
   /** Show or hide wheel i (0 FL, 1 FR, 2 RL, 3 RR): off the car mid pit stop. */
