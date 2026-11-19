@@ -145,6 +145,7 @@ export class Hud {
       let gap = '';
       if (race.sinceGreen === 0) gap = `P${e.slot + 1}`; // on the grid: the starting slot
       else if (e.retired) gap = 'OUT';
+      else if (e.physics.onPitLane && !e.finished) gap = 'PIT';
       else if (e.position === 1) gap = e.finished ? formatTime(e.finishTime) : 'LEADER';
       else if (e.finished && leader.finished) {
         const lapsDown = race.laps - Math.round(e.flagAt / L);
@@ -157,8 +158,10 @@ export class Hud {
       // the tyre each car is on, in its sidewall colour (and the AI's driving style on hover)
       const c = e.physics.compound;
       const tyre = c ? `<b class="tyre" style="color:${c.css};border-color:${c.css}">${c.letter}</b>` : '<b></b>';
-      const title = e.style ? ` title="${e.style.name} driver"` : '';
-      return `<li${title} class="${e.isPlayer ? 'me' : ''}${e.finished ? ' done' : ''}${e.retired ? ' out' : ''}"><span class="p">${e.position}</span><i style="background:${e.team.ui.primary}"></i><span>${name}</span>${tyre}<span class="gap">${gap}</span></li>`;
+      const stops = e.stops ? `${e.stops} stop${e.stops > 1 ? 's' : ''}` : 'no stops';
+      const title = ` title="${e.style ? `${e.style.name} driver · ` : ''}${c ? `${c.name.toLowerCase()}s · ` : ''}${stops}"`;
+      const pit = gap === 'PIT' ? ' pit' : '';
+      return `<li${title} class="${e.isPlayer ? 'me' : ''}${e.finished ? ' done' : ''}${e.retired ? ' out' : ''}${pit}"><span class="p">${e.position}</span><i style="background:${e.team.ui.primary}"></i><span>${name}</span>${tyre}<span class="gap">${gap}</span></li>`;
     });
     document.getElementById('standings-list').innerHTML = rows.join('');
   }

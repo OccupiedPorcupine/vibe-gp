@@ -283,6 +283,7 @@ async function start() {
     if (opts.opponents > 0) {
       race = new Race(track.path, car.team, physics, TEAMS, opts);
       race.key = raceKey(opts);
+      race.pitStops = race.ai.filter((e) => e.pitStop.box).map((e) => ({ k: e.pitStop.box.k, pitStop: e.pitStop, car: e.physics }));
       for (const e of race.ai) {
         e.car = aiCar(e.team);
         scene.add(e.car.group, e.car.debris);
@@ -295,6 +296,7 @@ async function start() {
         timer.flash = { text: `${e.team.name.toUpperCase()} RETIRES`, until: timer.time + 2.5, warn: true };
       };
     }
+    physics.wearScale = race?.wearScale ?? 1; // tyre wear for the race distance; normal alone
     hud.setRace(race);
   }
 
@@ -303,7 +305,7 @@ async function start() {
 
   /** Animate the pit crews, then draw the car (on the jacks / wheels off mid stop). */
   function syncCar(dt) {
-    crews.update(dt, performance.now() / 1000, pitStop, physics, teamGarage(car.team));
+    crews.update(dt, performance.now() / 1000, pitStop, physics, teamGarage(car.team), race?.pitStops);
     car.update(physics, dt, crews.lift);
     car.setWing(physics.damage, crews.wingMode, physics);
     car.setDamage(physics.damage, physics, dt);
@@ -313,13 +315,33 @@ async function start() {
     crews.wheelOn.forEach((on, i) => car.setWheelVisible(i, on));
     for (const e of race?.ai ?? []) {
       const c = e.car, p = e.physics;
+      // in its box: on the jacks, wheels coming off and on (its crew's doing)
+      const out = e.pitStop.box ? crews.out(e.pitStop.box.k) : null;
       c.setLod(Math.hypot(p.position.x - camera.position.x, p.position.z - camera.position.z));
-      c.update(p, dt);
+      c.update(p, dt, out?.lift ?? 0);
       c.setWing(p.damage, 'car', p);
       c.setDamage(p.damage, p, dt);
       c.updateDebris(dt);
-      c.setCompound(p.compound);
+      c.setCompound(out?.compound ?? p.compound);
+      for (let i = 0; i < 4; i++) c.setWheelVisible(i, out ? out.wheelOn[i] : true);
     }
+  }
+
+  /**
+   * The pit wall on the radio as the tyres wear: once when they start to go off, and again
+   * at the cliff (see wearGrip in tyres.js), when it's time to box.
+   */
+  let tyreCalled = 0;
+  function tyreCall() {
+    const wear = physics.wheels.reduce((a, w) => Math.max(a, w.wear), 0);
+    if (wear < 0.5) tyreCalled = 0; // a new set
+    const call = wear >= 0.72 ? 2 : wear >= 0.6 ? 1 : 0;
+    if (call <= tyreCalled) return;
+    tyreCalled = call;
+    if (!track.path.pit) return;
+    timer.flash = call === 2
+      ? { text: `TYRES ARE GONE · ${Math.round((1 - wear) * 100)}% LEFT · BOX, BOX`, until: timer.time + 3, warn: true }
+      : { text: `TYRES GOING OFF · ${Math.round((1 - wear) * 100)}% LEFT · PIT SOON`, until: timer.time + 2.5 };
   }
 
   /**
@@ -599,7 +621,11 @@ async function start() {
         const held = pitStop.update(physics, freecam.active ? autopilotStep(FIXED) : controls, FIXED);
         physics.step(startLights.holding ? { ...held, hold: true } : held, FIXED);
         damageFlash();
-        if (pitStop.released) timer.flash = { text: `PIT STOP ${pitStop.lastStop.toFixed(1)} s`, until: timer.time + 2.5 };
+        if (pitStop.released) {
+          timer.flash = { text: `PIT STOP ${pitStop.lastStop.toFixed(1)} s`, until: timer.time + 2.5 };
+          if (race) race.player.stops++;
+        }
+        tyreCall();
         const prevBest = timer.best;
         timer.update(physics.trackS, track.path.length, FIXED);
         if (timer.best !== prevBest && timer.best !== null) {
@@ -637,7 +663,7 @@ async function start() {
     hud.updateRace(now / 1000);
     sound.update(physics, { camera, mode: camMode, racing: !menu.visible && !paused });
     if (import.meta.env.DEV) {
-      window.__game = { rig, race, physics, timer, startLights, track, pitStop, crews, loadTrack, TRACKS, menu, car, setTeam, TEAMS, scene, sun, floods, renderer, sound };
+      window.__game = { rig, freecam, race, physics, timer, startLights, track, pitStop, crews, loadTrack, TRACKS, menu, car, setTeam, TEAMS, scene, sun, floods, renderer, sound };
       // automated screenshots can pin the camera: window.__fixedCam = { x, y, z, tx, ty, tz }
       const fc = window.__fixedCam;
       if (fc) {
