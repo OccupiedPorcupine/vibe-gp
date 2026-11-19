@@ -571,3 +571,15 @@ small { color: #9aa3b5; font-size: 11px; letter-spacing: 0.14em; }
 }
 @keyframes loading-sweep { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
 .loading-step { margin-top: 10px; font-size: 13px; color: rgba(255, 255, 255, 0.65); min-height: 1.2em; }
+
+/* incident monitor (free cam): picture-in-picture of a crash or spin, then its replay.
+   The picture itself is drawn in the 3D view behind this frame (src/incidents.js). */
+/* bottom middle, a little left: clear of the timing tower, the damage diagram and the dash */
+.monitor { --w: min(30vw, 380px); position: absolute; left: max(250px, calc(50% - var(--w) / 2 - 90px)); bottom: 16px; width: var(--w); pointer-events: auto; cursor: pointer; }
+.monitor[hidden] { display: none; }
+.monitor-view { aspect-ratio: 16 / 9; border: 2px solid var(--team, #e10600); border-bottom-width: 0; border-radius: 8px 8px 0 0; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45); }
+.monitor-caption { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; padding: 5px 10px; border-radius: 0 0 8px 8px; background: var(--team, #e10600); color: #fff; font-size: 13px; letter-spacing: 0.06em; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5); }
+.monitor-caption i { font-style: normal; font-size: 11px; font-weight: 800; padding: 1px 6px; border-radius: 4px; background: rgba(0, 0, 0, 0.45); }
+.monitor-caption i.live { color: #ff4d4d; }
+.monitor-caption i.replay { color: #ffd400; }
+.monitor-caption small { margin-left: auto; overflow: hidden; text-overflow: ellipsis; color: rgba(255, 255, 255, 0.75); font-size: 10px; }

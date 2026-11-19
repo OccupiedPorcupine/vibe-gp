@@ -24,6 +24,7 @@ import { DAMAGE } from './damage.js';
 import { Sound } from './sound.js';
 import { Race, LEVELS as AI_LEVELS, AIDriver, Entry, racingLine, STYLES } from './ai.js';
 import { FreeCam } from './freecam.js';
+import { IncidentMonitor } from './incidents.js';
 import { PauseMenu } from './pause.js';
 
 const SUN_DIR = [0.45, 0.8, 0.35];
@@ -164,6 +165,12 @@ async function start() {
   bindTouch(input);
   const rig = new CameraRig(camera);
   const freecam = new FreeCam(camera, renderer.domElement);
+  // free cam: a picture-in-picture monitor pops up for crashes, spins and retirements, and
+  // replays them (src/incidents.js). The camera joins the scene to carry the monitor's quad.
+  scene.add(camera);
+  const carOf = (e) => (e.isPlayer ? car : e.car);
+  const monitor = new IncidentMonitor(camera, carOf);
+  monitor.onPick = (e) => watch(e);
   /** V: free camera on / off (C also leaves it, back to the view it left). */
   function toggleFree() {
     if (freecam.active) {
@@ -331,6 +338,7 @@ async function start() {
 
   /** Build (or clear) the AI field for the current track, team and settings. */
   function buildRace() {
+    monitor.reset();
     watch(null);
     for (const e of race?.ai ?? []) {
       scene.remove(e.car.group, e.car.debris);
@@ -351,6 +359,7 @@ async function start() {
         else if (place === 1 && !race.player.finished) timer.flash = { text: `CHEQUERED FLAG · ${e.team.name.toUpperCase()} WINS`, until: timer.time + 3 };
       };
       race.onRetire = (e) => {
+        monitor.retired(e, freecam.active);
         timer.flash = { text: `${e.team.name.toUpperCase()} RETIRES`, until: timer.time + 2.5, warn: true };
       };
     }
@@ -375,7 +384,10 @@ async function start() {
       const c = e.car, p = e.physics;
       // in its box: on the jacks, wheels coming off and on (its crew's doing)
       const out = e.pitStop.box ? crews.out(e.pitStop.box.k) : null;
-      c.setLod(Math.hypot(p.position.x - camera.position.x, p.position.z - camera.position.z));
+      // near the main camera or the incident monitor's live one: full detail
+      const mc = monitor.liveCam;
+      const dist = Math.hypot(p.position.x - camera.position.x, p.position.z - camera.position.z);
+      c.setLod(mc ? Math.min(dist, Math.hypot(p.position.x - mc.position.x, p.position.z - mc.position.z)) : dist);
       c.update(p, dt, out?.lift ?? 0);
       c.setWing(p.damage, 'car', p);
       c.setDamage(p.damage, p, dt);
@@ -531,6 +543,7 @@ async function start() {
   }
 
   function resetCar() {
+    monitor.reset();
     watch(null);
     // a different team, field size, length or difficulty needs a new field
     if ((race?.key ?? null) !== (raceOptions().opponents > 0 ? raceKey(raceOptions()) : null)) buildRace();
@@ -646,6 +659,7 @@ async function start() {
     }
 
     if (menu.visible) {
+      monitor.hide();
       menu.handleKeys(input);
       if (freecam.active) freecam.stop();
       // slow orbit behind the menu: close on the car while picking a team, wide for circuits
@@ -683,6 +697,9 @@ async function start() {
       }
       COMPOUND_LIST.forEach((c, i) => input.hit(`Digit${i + 1}`) && pickCompound(c));
       if (input.hit('KeyF')) toggleWing();
+      if (input.hit('KeyB') && freecam.active && !monitor.replayLast(true)) {
+        timer.flash = { text: 'NO CRASH TO REPLAY YET', until: timer.time + 1.5 };
+      }
 
       acc += dt;
       const controls = input.state;
@@ -708,6 +725,7 @@ async function start() {
         acc -= FIXED;
       }
       syncCar(dt);
+      monitor.update(race?.entries, dt, freecam.active, watching ? watching.physics : physics);
       if (freecam.active) freecam.update(input, dt);
       else if (watching) rig.update(watching.physics, dt, watching.car);
       else rig.update(physics, dt, car);
@@ -741,13 +759,19 @@ async function start() {
     hud.updateRace(now / 1000);
     sound.update(viewed, { camera, mode: camMode, racing: !menu.visible && !paused });
     if (import.meta.env.DEV) {
-      window.__game = { rig, freecam, race, physics, timer, startLights, track, pitStop, crews, loadTrack, TRACKS, menu, car, setTeam, TEAMS, scene, sun, floods, renderer, sound };
+      window.__game = { rig, freecam, monitor, race, physics, timer, startLights, track, pitStop, crews, loadTrack, TRACKS, menu, car, setTeam, TEAMS, scene, sun, floods, renderer, sound };
       // automated screenshots can pin the camera: window.__fixedCam = { x, y, z, tx, ty, tz }
       const fc = window.__fixedCam;
       if (fc) {
         camera.position.set(fc.x, fc.y, fc.z);
         camera.lookAt(fc.tx, fc.ty, fc.tz);
       }
+    }
+    // the incident monitor's picture first (reusing last frame's shadow map), then the view
+    if (monitor.shown) {
+      sun.shadow.autoUpdate = false;
+      monitor.render(renderer, scene, race ? race.entries.map(carOf) : [car], paused || menu.visible ? 0 : dt);
+      sun.shadow.autoUpdate = true;
     }
     renderer.render(scene, camera);
     // mirrors show up next frame; skip them when the view is too far away to see them.

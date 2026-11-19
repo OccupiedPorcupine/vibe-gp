@@ -219,13 +219,15 @@ const STYLE_DECK = ['aggressive', 'balanced', 'smooth', 'aggressive', 'balanced'
 /**
  * AI chaos (the Settings slider, 0..1): how far apart the drivers race. CHAOS_DEFAULT is the
  * styles exactly as above; lower narrows them to about 60% (tidier, fewer mistakes), higher
- * widens them up to 3x: late brakers brake later still, aggressive drivers leave less room
+ * widens them up to 4.2x: late brakers brake later still, aggressive drivers leave less room
  * and close up more, mistakes come several times as often, and each driver gets a personal
  * twist on corner speed, braking and pace. The top end means crashes.
  */
 export const CHAOS_DEFAULT = 0.4;
 export function chaosSpread(c = CHAOS_DEFAULT) {
-  return c <= CHAOS_DEFAULT ? 0.6 + 0.4 * (c / CHAOS_DEFAULT) : 1 + 2 * ((c - CHAOS_DEFAULT) / (1 - CHAOS_DEFAULT));
+  if (c <= CHAOS_DEFAULT) return 0.6 + 0.4 * (c / CHAOS_DEFAULT);
+  const t = (c - CHAOS_DEFAULT) / (1 - CHAOS_DEFAULT);
+  return 1 + 2 * t + 1.2 * t ** 3; // steepest at the top: 4.2x at 100
 }
 
 /** A style with its differences from a middle-of-the-road driver scaled by spread v; quirk: this driver's own [-1, 1] x3. */
@@ -236,11 +238,11 @@ function spreadStyle(st, v, quirk = [0, 0, 0]) {
     ...st,
     corner: dev(st.corner) + quirk[0] * 0.012 * extra,
     brake: Math.max(0.7, dev(st.brake) + quirk[1] * 0.06 * extra),
-    gap: Math.max(0.35, dev(st.gap)),
+    gap: Math.max(0.25, dev(st.gap)),
     room: st.room * v - 0.15 * extra,
-    pass: st.pass / Math.max(1, v) ** 0.7,
+    pass: st.pass / Math.max(1, v) ** 0.8,
     mistakes: st.mistakes * v ** 1.3,
-    late: Math.max(0.5, dev(st.late)),
+    late: Math.max(0.35, dev(st.late)),
     wobble: st.wobble * v,
   };
 }
