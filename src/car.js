@@ -12,7 +12,7 @@ import { applyDecals } from './decals.js';
 import {
   liveryMaterial, paintMaterial, carbonMaterial, tyreMaterial, rimMaterial, simpleMaterial, wheelCoverMaterial, tint,
 } from './materials.js';
-import { color, texture, uv, vec2, vec3, smoothstep, uniform } from 'three/tsl';
+import { color, texture, uv, vec2, vec3, smoothstep, uniform, positionGeometry } from 'three/tsl';
 import { DAMAGE } from './damage.js';
 import { SteeringWheel } from './wheel.js';
 
@@ -118,6 +118,9 @@ export const DEFAULT_SHAPE = {
 };
 
 /** Car.update state for a car standing still at the origin, with no physics behind it. */
+/** Cockpit opening (an ellipse in x, z, cut through the chassis top) and its tub's floor. */
+const COCKPIT = { a: 0.2, b: 0.42, z: 0.1, rim: 0.7, floor: 0.42 };
+
 export const PARKED = { position: { x: 0, z: 0 }, height: 0, yaw: 0, steerAngle: 0, speed: 0, pitch: 0, roll: 0, heave: 0 };
 
 /**
@@ -139,6 +142,8 @@ function commonMaterials() {
     carbon: carbonMaterial(),
     black: simpleMaterial(0x0b0b0c, 0.5),
     visor: simpleMaterial(0x111111, 0.1, 0.6),
+    tub: Object.assign(simpleMaterial(0x16171a, 0.9), { side: THREE.DoubleSide }),
+    suit: simpleMaterial(0x1c1d22, 0.8),
     rim: rimMaterial(),
     brake: simpleMaterial(0x1a1a1c, 0.7, 0.2),
     light,
@@ -229,7 +234,12 @@ export class Car {
     this.mirrorPaint = liveryMaterial(tint(team.colors.mirror ?? 0x111111), team.finish);
     this.mirrorPaint.side = THREE.DoubleSide;
 
-    this.add(this.body, this.monocoque(), livery('monocoque'));
+    const tub = livery('monocoque');
+    // the cockpit opening is a real hole in the chassis top (the tub below is built in cockpit())
+    const p = positionGeometry;
+    tub.maskNode = p.x.div(COCKPIT.a).pow2().add(p.z.sub(COCKPIT.z).div(COCKPIT.b).pow2()).greaterThan(1)
+      .or(p.y.lessThan(COCKPIT.floor + 0.05));
+    this.add(this.body, this.monocoque(), tub);
     const sidepodMat = livery('sidepod');
     // index 0 = left (+x), 1 = right, like the damage model; each crumples on its own
     this.sidepods = [1, -1].map((side) => [this.add(this.body, this.sidepod(side), sidepodMat)]);
@@ -721,22 +731,28 @@ export class Car {
 
   cockpit(black, carbon, helmetMat, tcamMat) {
     const b = this.body;
-    // cockpit opening: dark tub with a carbon rim around it
-    const opening = Array.from({ length: 24 }, (_, i) => {
-      const a = (i / 24) * Math.PI * 2;
-      return [Math.cos(a) * 0.2, 0.1 + Math.sin(a) * 0.42];
+    const C = COCKPIT;
+    // cockpit opening: a hole in the chassis top (see the monocoque's mask) with a tub
+    // below it: padded walls and a floor, and a carbon rim around the edge
+    const opening = Array.from({ length: 32 }, (_, i) => {
+      const a = (i / 32) * Math.PI * 2;
+      return [Math.cos(a) * C.a, C.z + Math.sin(a) * C.b];
     });
-    this.add(b, plateGeometry(opening, 0.012, 'y', 0.696), black);
-    const rim = opening.map(([x, z]) => [x * 1.04, 0.7, z * 1.02 + 0.002]);
+    const walls = ringLoft([C.rim + 0.01, C.floor].map((y) => opening.map(([x, z]) => [x, y, z])), { caps: false });
+    this.add(b, walls, this.common.tub);
+    this.add(b, plateGeometry(opening, 0.01, 'y', C.floor), this.common.tub);
+    const rim = opening.map(([x, z]) => [x * 1.04, C.rim, (z - C.z) * 1.02 + C.z]);
     this.add(b, tubeGeometry([...rim, rim[0]], 0.016, 6), carbon);
     // T-cam on top of the airbox (yellow / black identifies the driver)
     this.add(b, boxGeometry(0.11, 0.03, 0.07), tcamMat, [0, 1.07, -0.33]);
     // driver helmet
     const helmet = sphereGeometry(0.13, 20, 14, [1, 1.05, 1.15]);
-    // hidden in the driver view, whose eye is inside it (see setDriverView)
+    // hidden in the driver view, whose eye is inside it (see setDriverView), with the
+    // driver's shoulders in the tub below
     this.helmet = [
       this.add(b, helmet, helmetMat, [0, 0.76, -0.02]),
       this.add(b, boxGeometry(0.2, 0.06, 0.04), this.common.visor, [0, 0.78, 0.12]),
+      this.add(b, sphereGeometry(0.16, 16, 10, [1.15, 0.75, 0.8]), this.common.suit, [0, 0.58, -0.1]),
     ];
     // the player's steering wheel, with shift lights and a dash display (AI cars: none)
     if (!this.ai) {
