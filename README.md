@@ -101,12 +101,14 @@ By default you race the other ten teams (five on touch devices) over 5 laps, sta
 
 - **Racing line**: a minimum-curvature line inside the asphalt and clear of any walls that squeeze into it, found by repeatedly smoothing a lateral offset per centreline sample. Its speed profile comes from the tyre grip summary in `PARAMS` (corner speed, then braking zones worked backwards), tuned so a lone car laps every circuit without touching a wall.
 - **Driving**: pure pursuit on that line, holding the profile speed scaled by the team's pace (the 2025 constructors' order: McLaren quickest, Cadillac slowest), with a slow random wobble so they don't drive like a train.
-- **Traffic**: each car looks further up the road the faster it goes. It brakes for a slower car in its path, pulls out to pass on the side with more room (never across a car alongside), and keeps a car's width from a car next to it. A car stuck or facing backwards for a few seconds is put back on the line behind where it was.
+- **Traffic**: each car looks further up the road the faster it goes. It brakes for a slower car in its path, pulls out to pass on the side with more room (never across a car alongside), and keeps a car's width from a car next to it. A car stuck or facing backwards for a few seconds is put back on the line behind where it was, unless *No resets* is on (below).
 - **Contact**: cars are three circles along their length; overlaps are pushed apart, the closing speed is shared, off-centre hits spin the car, and (with damage on) both cars are damaged.
 
-The HUD shows your position and laps, and a timing tower with gaps to the leader. Settings has *AI opponents* on / off, *AI difficulty* (easy / normal / hard) and *Race length* (3, 5, 10 or 20 laps). URL overrides: `?ai=<0-10>` opponents, `?laps=<n>`, `?difficulty=easy|normal|hard`.
+**No resets** (Settings, or `?resets=0`): a crashed AI car is never put back. It gets itself going: it backs away from whatever it hit, steering so the nose swings towards the line, then drives off. Facing the wrong way, that becomes a three-point turn. A car whose tries get it nowhere six times in a row retires. So does a car with broken suspension or a dead engine (it can't pit for repairs): it coasts to just off the asphalt and stops. Retired cars stay parked where they stopped, the other cars drive round them, and the timing tower shows them as OUT.
 
-`node scripts/ai-check.mjs <track> [laps] [opponents] [difficulty]` runs a whole race headless (every car AI-driven) and prints the result, best laps, wall contacts, time off track and respawns.
+The HUD shows your position and laps, and a timing tower with gaps to the leader. Settings has *AI opponents* on / off, *AI difficulty* (easy / normal / hard), *Race length* (3, 5, 10 or 20 laps) and *No resets*. URL overrides: `?ai=<0-10>` opponents, `?laps=<n>`, `?difficulty=easy|normal|hard`, `?resets=0`.
+
+`node scripts/ai-check.mjs <track> [laps] [opponents] [difficulty]` runs a whole race headless (every car AI-driven) and prints the result, best laps, wall contacts, time off track and respawns (`NORESETS=1` for no-resets mode).
 
 ## Damage
 
