@@ -22,7 +22,7 @@ import { PitCrews } from './pitCrew.js';
 import { COMPOUND_LIST } from './tyres.js';
 import { DAMAGE } from './damage.js';
 import { Sound } from './sound.js';
-import { Race } from './ai.js';
+import { Race, LEVELS as AI_LEVELS } from './ai.js';
 import { PauseMenu } from './pause.js';
 
 const SUN_DIR = [0.45, 0.8, 0.35];
@@ -223,19 +223,18 @@ async function start() {
     timer.flash = { text: `${SETTING_NAMES[id]} ${value}`, until: timer.time + 1.5 };
   };
 
-  // ---- AI opponents: ?ai=<count> (0 = none), ?laps=<n>, ?difficulty=easy|normal|hard and
+  // ---- AI opponents: ?ai=<count> (0 = none), ?laps=<n>, ?difficulty=easy|normal|hard|expert and
   // ?resets=0 (no-resets mode) override Settings ----
-  const LEVELS = { easy: 0.92, normal: 1, hard: 1.035 };
   const query = new URLSearchParams(location.search);
   function raceOptions() {
     const opponents = query.has('ai') ? Math.max(0, Math.min(10, +query.get('ai') || 0)) : settings.get('ai') ? (MOBILE ? 5 : 10) : 0;
     const laps = Math.max(1, +(query.get('laps') ?? settings.get('laps')) || 5);
     const level = query.get('difficulty') ?? settings.get('aiLevel');
-    return { opponents, laps, difficulty: LEVELS[level] ?? 1 };
+    return { opponents, laps, level: AI_LEVELS[level] ? level : 'normal' };
   }
   // no-resets mode: crashed AI cars aren't put back on the track (applies at once, mid-race too)
   const aiResets = () => (query.has('resets') ? query.get('resets') !== '0' : !settings.get('noResets'));
-  const raceKey = (o) => `${track.def.id}|${car.team.id}|${o.opponents}|${o.laps}|${o.difficulty}`;
+  const raceKey = (o) => `${track.def.id}|${car.team.id}|${o.opponents}|${o.laps}|${o.level}`;
 
   // AI cars by team, kept between races: a car doesn't depend on the track, and building
   // one means building its shaders again (most of the extra load time of a full grid)

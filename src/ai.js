@@ -12,6 +12,8 @@
 // - Race: the whole field (player + AI): grid, progress along the lap, positions, laps and
 //   the chequered flag.
 import { CarPhysics, PARAMS } from './physics.js';
+import { TYRE } from './tyres.js';
+import { AI_PACE } from './tracks/aipace.js';
 
 const LINE_MARGIN = 1.5; // m between the racing line and the edge of the asphalt (car half width + a bit)
 const WALL_MARGIN = 2.2; // m between the racing line and a wall face
@@ -22,7 +24,13 @@ const STAMP = 20, STAMP_OFFSET = 400; // timing loops every 20 m, from 400 m beh
 const MASS = PARAMS.mass, INERTIA = PARAMS.yawInertia;
 
 /** Minimum-curvature racing line and its speed profile for a TrackPath. */
-export function racingLine(P, { gripUse = 1.15, brakeUse = 0.86 } = {}) {
+export const AI_SEG = 20; // m: the learned speed profile (scripts/ai-learn.mjs) scales corner speeds per segment of this length
+
+/**
+ * `learned`: { brake, seg: [scale per AI_SEG m] } from src/tracks/aipace.js (made by
+ * scripts/ai-learn.mjs); by default the track's own entry, or the plain estimate.
+ */
+export function racingLine(P, { gripUse = 1.15, learned = AI_PACE[P.def?.id] } = {}) {
   const N = P.N;
   const lat = new Float64Array(N);
   const lo = new Float64Array(N), hi = new Float64Array(N);
@@ -60,24 +68,36 @@ export function racingLine(P, { gripUse = 1.15, brakeUse = 0.86 } = {}) {
     seg[i] = Math.hypot(X[j] - X[i], Z[j] - Z[i]) || P.ds;
     head[i] = Math.atan2(X[j] - X[i], Z[j] - Z[i]);
   }
+  // corner speed from the tyre grip summary (cold tyres, so on the safe side) and crests;
+  // the learned per-segment scales go on top of this
   const g = (v) => PARAMS.baseGrip + PARAMS.downforceGrip * v * v;
-  const vlim = new Float64Array(N);
+  const vc = new Float64Array(N), vcap = new Float64Array(N), curv = new Float64Array(N);
   for (let i = 0; i < N; i++) {
     const a = P.wrap(i - 3), c = P.wrap(i + 3);
     let span = 0;
     for (let m = -3; m < 3; m++) span += seg[P.wrap(i + m)];
     const dh = Math.atan2(Math.sin(head[c] - head[a]), Math.cos(head[c] - head[a]));
     const kk = Math.max(Math.abs(dh) / span, 1e-5);
+    curv[i] = kk;
     let v = 10;
     for (let n = 0; n < 25; n++) v = Math.sqrt((g(v) * gripUse) / kk);
+    vc[i] = v;
     // crests unload the car: keep v²·κ well under g there
     const crest = -P.vcurv[i];
-    if (crest > 0) v = Math.min(v, Math.sqrt((9.81 * 0.7) / crest));
-    vlim[i] = Math.min(v, 95);
+    vcap[i] = Math.min(95, crest > 0 ? Math.sqrt((9.81 * 0.7) / crest) : 95);
   }
-  // the slowest point of a corner governs the few metres around it (hairpin apexes are
-  // sharper than a few samples can measure)
-  {
+  const K = Math.ceil(P.length / AI_SEG);
+  const segOf = (i) => Math.min(K - 1, Math.floor((i * P.ds) / AI_SEG));
+  const vlim = new Float64Array(N);
+  /**
+   * (Re)build the speed profile: corner speeds × scale[segment], then braking zones worked
+   * backwards. The braking uses the grip there is at each speed (downforce: about three
+   * times as much at 300 km/h as at walking pace), times `brakeUse`.
+   */
+  function profile(scale = null, brakeUse = 0.86) {
+    for (let i = 0; i < N; i++) vlim[i] = Math.min(vcap[i], vc[i] * (scale ? scale[segOf(i)] : 1));
+    // the slowest point of a corner governs the few metres around it (hairpin apexes are
+    // sharper than a few samples can measure)
     const w = Math.max(1, Math.round(8 / P.ds));
     const src = Float64Array.from(vlim);
     for (let i = 0; i < N; i++) {
@@ -85,13 +105,15 @@ export function racingLine(P, { gripUse = 1.15, brakeUse = 0.86 } = {}) {
       for (let k = -w; k <= w; k++) m = Math.min(m, src[P.wrap(i + k)]);
       vlim[i] = m;
     }
-  }
-  for (let pass = 0; pass < 2; pass++) {
-    for (let i = N - 1; i >= 0; i--) {
-      const j = P.wrap(i + 1);
-      vlim[i] = Math.min(vlim[i], Math.sqrt(vlim[j] ** 2 + 2 * PARAMS.brakeDecel * brakeUse * seg[i]));
+    const decel = (v) => brakeUse * (PARAMS.brakeDecel + TYRE.muLongScale * PARAMS.downforceGrip * v * v);
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = N - 1; i >= 0; i--) {
+        const j = P.wrap(i + 1);
+        vlim[i] = Math.min(vlim[i], Math.sqrt(vlim[j] ** 2 + 2 * decel(vlim[j]) * seg[i]));
+      }
     }
   }
+  profile(learned?.seg, learned?.brake ?? 0.86);
   const at = (arr, s) => {
     const f = (((s % P.length) + P.length) % P.length) / P.ds;
     const i = Math.floor(f) % N;
@@ -100,8 +122,17 @@ export function racingLine(P, { gripUse = 1.15, brakeUse = 0.86 } = {}) {
   return {
     lat,
     vlim,
+    segments: K,
+    segOf,
+    profile,
     /** Room for a car at s: { left, right } lateral limits (right is negative). */
     limits: (s) => ({ left: at(hi, s) + 0.3, right: at(lo, s) - 0.3 }),
+    /** |curvature| of the line at s (1/m), the tightest within `ahead` metres. */
+    curvAt(s, ahead = 0) {
+      let m = 0;
+      for (let d = 0; d <= ahead; d += P.ds * 2) m = Math.max(m, at(curv, s + d));
+      return m;
+    },
     latAt(s) {
       const f = (((s % P.length) + P.length) % P.length) / P.ds;
       const i = Math.floor(f) % N, j = P.wrap(i + 1), t = f - Math.floor(f);
@@ -152,7 +183,12 @@ export class AIDriver {
     const P = car.track;
     const L = P.length;
     if (sinceGreen < this.reaction) return { steer: 0, throttle: 0, brake: 1 };
-    // no-resets mode: a car too badly damaged to race (it can't pit) pulls over and retires
+    // a car too badly damaged to race (it can't pit): with resets it's put back on the line
+    // repaired; in no-resets mode it pulls over and retires
+    if (this.resets && wrecked(car.damage)) {
+      this.respawn(field);
+      return { steer: 0, throttle: 0, brake: 0 };
+    }
     if (!this.resets && (this.parking || wrecked(car.damage))) return this.pullOver();
 
     this.wobbleT -= dt;
@@ -165,7 +201,8 @@ export class AIDriver {
     const s = car.trackS;
     const v = Math.max(0, car.speed);
     const lineLat = this.line.latAt(s);
-    let vt = this.line.vAt(s + 3) * (this.pace + this.wobble);
+    // the target a little ahead: the brake pedal takes a moment to come on
+    let vt = this.line.vAt(s + 3 + v * 0.08) * (this.pace + this.wobble);
     // the car's own damage: no point charging at the limit with half a front wing
     vt *= 1 - 0.12 * Math.min(1, car.damage.wing[0] + car.damage.wing[1]);
 
@@ -174,54 +211,111 @@ export class AIDriver {
     const clampLat = (x) => Math.max(limR, Math.min(limL, x));
     let follow = Infinity;
     let urgent = false; // something is closing fast: move across quicker
+    this.closeBehind = null; // { d, lat } of a car we're about to hit
     const range = 40 + v * 2.2; // look further up the road the faster we go
-    let blocker = null, blockerD = Infinity, blockerLine = 0, beside = null, besideDl = 0;
+    let blocker = null, blockerD = Infinity, blockerLine = 0, blockerExtra = 0, beside = null, besideDl = 0, besideExtra = 0;
+    // the first seconds after the start the pack is bunched: give everyone more room
+    const startGap = sinceGreen < 8 ? 4 : 0;
     for (const o of field) {
       if (o === this.entry) continue;
       const op = o.physics;
       const d = lapDelta(op.trackS, s, L);
       if (d <= -6 || d >= range) continue;
       const dl = op.lateral - car.lateral;
+      // a human driver can brake or swerve without warning: more room around the player
+      const extra = o.isPlayer ? 0.4 : 0;
       // where our (offset) line will be when we get to it: the line can swing across the
       // road between here and there (Eau Rouge), so judge it there, not here
       const planned = this.line.latAt(s + d) + this.offset;
-      const inPath = (d < 15 && Math.abs(dl) < 2.4) || Math.abs(op.lateral - planned) < 2.4;
+      const width = 2.6 + extra; // centre to centre: closer than this and we'd touch
+      const inPath = (d < 15 && Math.abs(dl) < width) || Math.abs(op.lateral - planned) < width;
       if (d > 4 && inPath) {
-        const closing = v - op.speed;
+        // the speed it's about to slow to: a car ahead brakes for the corner too, and
+        // following its present speed is how you run into the back of it
+        // (and how hard it's braking already: its speed a moment from now)
+        const opNow = Math.max(0, op.speed + Math.min(0, op.longAccel ?? 0) * 0.6);
+        const opV = Math.min(opNow, this.line.vAt(op.trackS + 5 + Math.max(0, op.speed) * 0.4));
+        const closing = v - opV;
         if (closing > 15 && d < closing * 3) urgent = true; // a slow or stopped car ahead
-        // don't run into it: brake to its speed by the time we get within 7 m, unless
-        // we'll already be clear of it by the time we get there
-        const gap = d - 7;
-        const safe = Math.sqrt(Math.max(0, op.speed) ** 2 + 2 * PARAMS.brakeDecel * 0.6 * Math.max(0, gap));
-        if (Math.abs(op.lateral - planned) < 2.4 || d < 12) follow = Math.min(follow, gap <= 0 ? op.speed - 2 : safe);
+        // about to hit it: closer than a car's length plus the distance to shed the closing
+        // speed (at ~2 g) and a moment to react. Brake, and swerve to the side with room.
+        if (Math.abs(dl) < 2.4 && closing > 2 && d < 5.5 + (closing * closing) / 40 + closing * 0.15 && (!this.closeBehind || d < this.closeBehind.d)) {
+          this.closeBehind = { d, lat: op.lateral };
+        }
+        // don't run into it: be at its speed by the time we're a following gap behind,
+        // unless we'll already be clear of it by the time we get there
+        const gap = d - (7 + v * 0.15 + startGap + (o.isPlayer ? 3 : 0));
+        const safe = Math.sqrt(opV ** 2 + 2 * PARAMS.brakeDecel * 0.6 * Math.max(0, gap));
+        if (Math.abs(op.lateral - planned) < width || d < 12) follow = Math.min(follow, gap <= 0 ? opV - 2 : safe);
         // the nearest car we're catching is the one to pass
-        const needPass = closing > 1.5 || (vt > op.speed + 2 && d < 20);
+        const needPass = closing > 1.5 || (vt > opV + 2 && d < 20);
         if (needPass && d < blockerD) {
           blocker = op;
           blockerD = d;
           blockerLine = planned - this.offset;
+          blockerExtra = extra;
         }
-      } else if (Math.abs(d) <= 6 && Math.abs(dl) < 3.2 && (!beside || Math.abs(dl) < Math.abs(besideDl))) {
+      } else if (Math.abs(d) <= 6 + startGap && Math.abs(dl) < 3.5 + extra && (!beside || Math.abs(dl) < Math.abs(besideDl))) {
         beside = op;
         besideDl = dl;
+        besideExtra = extra;
       }
     }
     let want = 0; // offset from the line we'd like (m)
-    if (blocker) {
+    // off the start: keep to our own side of the grid for the first seconds, blending onto
+    // the line, rather than every car converging on it at once
+    if (this.gridLat === undefined && sinceGreen > 0) this.gridLat = car.lateral;
+    const laneHold = sinceGreen < 3 ? 1 : sinceGreen < 8 ? (8 - sinceGreen) / 5 : 0;
+    if (laneHold > 0 && this.gridLat !== undefined) want = clampLat(this.gridLat) - lineLat;
+    want *= laneHold;
+    // in trouble (getting going again, stuck, off the track or crawling) with a much faster
+    // car coming up behind: keep out of its way on the side we're on, rather than rejoin
+    // across it. (A car merely accelerating out of a corner doesn't count.)
+    let yieldTo = null;
+    const offTrack = Math.abs(car.lateral) > P.hw + 0.5;
+    if (this.rec || this.stuck > 0.5 || offTrack || (v < 15 && v < this.line.vAt(s) * 0.4)) {
+      for (const o of field) {
+        if (o === this.entry) continue;
+        const d = lapDelta(o.physics.trackS, s, L);
+        if (d < -3 && d > -90 && o.physics.speed > v + 8) yieldTo = o;
+      }
+    }
+    if (yieldTo && !blocker) {
+      const side = car.lateral >= lineLat ? 1 : -1;
+      want = (side > 0 ? limL : limR) - lineLat;
+    } else if (laneHold > 0.5) {
+      // still sorting out after the start: no dives for a gap, just keep a car's width from
+      // anyone alongside
+      if (beside) {
+        const side = besideDl > 0 ? -1 : 1;
+        const apart = clampLat(beside.lateral + side * (3.3 + besideExtra)) - lineLat;
+        if (side > 0 ? apart > want : apart < want) want = apart;
+      }
+    } else if (blocker) {
       // pass on the side with more room, but never across a car alongside us
       // (room and offsets measured where the other car is)
       const there = this.line.limits(s + blockerD);
       const roomL = there.left - blocker.lateral, roomR = blocker.lateral - there.right;
       let side = roomL > roomR ? 1 : -1;
       if (beside) side = besideDl > 0 ? -1 : 1;
-      if ((side > 0 ? roomL : roomR) < 2.6) side = -side; // no room that side after all
-      want = Math.max(there.right, Math.min(there.left, blocker.lateral + side * 2.9)) - blockerLine;
+      if ((side > 0 ? roomL : roomR) < 3) side = -side; // no room that side after all
+      want = Math.max(there.right, Math.min(there.left, blocker.lateral + side * (3.2 + blockerExtra))) - blockerLine;
     } else if (beside) {
       // alongside: hold our side, give each other a car's width
       const side = besideDl > 0 ? -1 : 1; // the other car is left of us: lean right
-      want = clampLat(beside.lateral + side * 3.0) - lineLat;
+      want = clampLat(beside.lateral + side * (3.3 + besideExtra)) - lineLat;
     }
     vt = Math.min(vt, follow);
+    // emergency: about to run into the back of someone, whatever the plan
+    if (this.closeBehind) {
+      // brake hard, keep steering for the line (swerving at speed under full braking spun
+      // cars into the next one more often than it saved a hit)
+      this.brakeNow = true;
+    }
+    // the profile is for the racing line: off it (passing, giving room) a corner is tighter,
+    // so slow down by about what the smaller radius costs: v ~ sqrt(R)
+    const off = Math.max(Math.abs(this.offset), Math.abs(want));
+    if (off > 0.3) vt *= Math.sqrt(Math.max(0.5, 1 - off * this.line.curvAt(s, 25 + v * 0.6)));
     this.offsetTarget = want;
     const rate = (urgent ? 7 : 2.5) * dt; // m per step the line can move sideways
     this.offset += Math.max(-rate, Math.min(rate, this.offsetTarget - this.offset));
@@ -252,10 +346,14 @@ export class AIDriver {
       if (r) return r;
     }
 
+    if (this.brakeNow) {
+      this.brakeNow = false;
+      return { steer: Math.max(-1, Math.min(1, err * 3.5)), throttle: 0, brake: 1 };
+    }
     return {
       steer: Math.max(-1, Math.min(1, err * 3.5)),
       throttle: v < vt ? 1 : 0,
-      brake: v > vt + 1.5 ? Math.min(1, (v - vt) / 4) : 0,
+      brake: v > vt + 0.3 ? Math.min(1, (v - vt) / 1.5) : 0,
     };
   }
 
@@ -345,10 +443,21 @@ export class AIDriver {
   }
 }
 
+/** Car-to-car contacts so far (for scripts/ai-check.mjs): any closing touch, and hard ones (> 5 m/s). */
+export const CONTACTS = { touches: 0, hard: 0, involving: new Map() };
+let stepNo = 0;
+
 /** Car-to-car contact for every pair in the field. */
 export function collideCars(field) {
+  stepNo++;
   for (let a = 0; a < field.length; a++) {
-    for (let b = a + 1; b < field.length; b++) collidePair(field[a].physics, field[b].physics);
+    for (let b = a + 1; b < field.length; b++) {
+      const hit = collidePair(field[a].physics, field[b].physics);
+      if (!hit) continue;
+      CONTACTS.touches++;
+      if (hit > 5) CONTACTS.hard++;
+      for (const e of [field[a], field[b]]) CONTACTS.involving.set(e, (CONTACTS.involving.get(e) ?? 0) + 1);
+    }
   }
 }
 
@@ -373,7 +482,7 @@ function collidePair(A, B) {
   A.position.x -= nx * pen / 2; A.position.z -= nz * pen / 2;
   B.position.x += nx * pen / 2; B.position.z += nz * pen / 2;
   const vr = (B.vel.x - A.vel.x) * nx + (B.vel.z - A.vel.z) * nz; // < 0: closing
-  if (vr >= 0) return;
+  if (vr >= 0) return 0;
   const e = 0.25;
   const j = (-(1 + e) * vr) / 2; // Δv each (equal masses)
   A.vel.x -= nx * j; A.vel.z -= nz * j;
@@ -390,6 +499,11 @@ function collidePair(A, B) {
   const speed = -vr;
   hurt(A, nx, nz, speed);
   hurt(B, -nx, -nz, speed);
+  // a new touch, not the same one carried over: this pair hasn't touched for half a second
+  const seen = (A.lastTouch ??= new Map());
+  const fresh = stepNo - (seen.get(B) ?? -1e9) > 60;
+  seen.set(B, stepNo);
+  return fresh && speed > 1 ? speed : 0;
 }
 
 /** Yaw kick from an impulse (Δv in m/s, world) applied at world point (cx, cz). */
@@ -447,8 +561,23 @@ export class Entry {
 }
 
 /** Pace ladder: the 2025 constructors' order (TEAMS order), quickest first. */
-export function teamPace(index, difficulty = 1) {
-  return Math.min(0.985, (0.955 - index * 0.006) * difficulty);
+/**
+ * Difficulty levels: the leading team's share of the learned speed profile, how much each
+ * team down the 2025 constructors' order gives away, and the range of reaction times at
+ * the start. The profile itself is near the car's limit (scripts/ai-learn.mjs learns it at
+ * 1.02 of it, so even Expert keeps a little margin in traffic).
+ */
+export const LEVELS = {
+  easy: { top: 0.86, spread: 0.005, reaction: [0.3, 0.6] },
+  normal: { top: 0.885, spread: 0.005, reaction: [0.2, 0.45] },
+  hard: { top: 0.95, spread: 0.004, reaction: [0.15, 0.35] },
+  expert: { top: 0.98, spread: 0.0025, reaction: [0.1, 0.22] },
+};
+
+/** Pace ladder: the team at `index` in TEAMS order (quickest first) at difficulty `level`. */
+export function teamPace(index, level = 'normal') {
+  const L = LEVELS[level] ?? LEVELS.normal;
+  return L.top - index * L.spread;
 }
 
 /**
@@ -456,7 +585,7 @@ export function teamPace(index, difficulty = 1) {
  * in pace order with the player at the back (or `playerSlot`).
  */
 export class Race {
-  constructor(path, playerTeam, playerPhysics, teams, { opponents = 10, laps = 5, difficulty = 1, playerSlot = null } = {}) {
+  constructor(path, playerTeam, playerPhysics, teams, { opponents = 10, laps = 5, level = 'normal', playerSlot = null } = {}) {
     this.path = path;
     this.laps = laps;
     this.line = racingLine(path);
@@ -485,8 +614,8 @@ export class Race {
       };
       const ti = teams.indexOf(team);
       e.driver = new AIDriver(e, this.line, {
-        pace: teamPace(ti, difficulty),
-        reaction: 0.15 + ((slot * 37) % 10) / 40,
+        pace: teamPace(ti, level),
+        reaction: (([a, b]) => a + (b - a) * (((slot * 37) % 10) / 9))((LEVELS[level] ?? LEVELS.normal).reaction),
         seed: slot * 7919 + 13,
       });
       this.entries.push(e);
@@ -520,6 +649,7 @@ export class Race {
       e.flagAt = undefined;
       e.retired = false;
       if (e.driver) {
+        e.driver.gridLat = undefined;
         e.driver.offset = e.driver.offsetTarget = 0;
         e.driver.stuck = 0;
         e.driver.rec = null;
