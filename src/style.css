@@ -583,24 +583,3 @@ small { color: #9aa3b5; font-size: 11px; letter-spacing: 0.14em; }
 .monitor-caption i.live { color: #ff4d4d; }
 .monitor-caption i.replay { color: #ffd400; }
 .monitor-caption small { margin-left: auto; overflow: hidden; text-overflow: ellipsis; color: rgba(255, 255, 255, 0.75); font-size: 10px; }
-
-/* onboard monitors (M): one tile per car in race order along the bottom, over the dash.
-   The pictures are drawn in the 3D view behind these frames (src/multiview.js). */
-.multiview { --tile: calc((min(96vw, 1180px) - 5 * 6px) / 6); position: absolute; z-index: 2; left: 50%; bottom: 10px; transform: translateX(-50%); display: grid; grid-template-columns: repeat(6, var(--tile)); gap: 6px; padding: 6px; border-radius: 10px; background: rgba(8, 10, 14, 0.55); pointer-events: auto; }
-.multiview[hidden] { display: none; }
-.mv-tile { cursor: pointer; border-radius: 6px; overflow: hidden; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--team, #888) 70%, transparent); }
-.mv-tile[hidden] { display: none; }
-.mv-tile:hover { box-shadow: inset 0 0 0 2px #fff; }
-.mv-tile.me { box-shadow: inset 0 0 0 2px var(--team, #e10600); }
-.mv-view { aspect-ratio: 16 / 9; }
-.mv-caption { display: flex; gap: 5px; align-items: center; padding: 2px 6px; font-size: 11px; white-space: nowrap; overflow: hidden; background: color-mix(in srgb, var(--team, #333) 55%, #0b0d12); color: #fff; }
-.mv-caption span { overflow: hidden; text-overflow: ellipsis; }
-.mv-caption em { margin-left: auto; font-style: normal; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.8); }
-.mv-tile.out { opacity: 0.45; }
-.mv-tile.out em { color: #ff5a3c; font-weight: 700; }
-/* the grid covers the bottom of the screen: the panels there, and the tower (the grid shows
-   the order and can be clicked too), step aside. The pictures are drawn in the 3D view, so
-   an HTML panel left on top would hide them. */
-#hud.mv-on .dash, #hud.mv-on .damage-map, #hud.mv-on .standings { visibility: hidden; }
-/* the incident monitor moves up above the grid */
-#hud.mv-on .monitor { bottom: calc(2 * (var(--mv-tile, calc((min(96vw, 1180px) - 30px) / 6)) * 0.5625 + 19px) + 40px); }
