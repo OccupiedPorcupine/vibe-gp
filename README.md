@@ -35,7 +35,7 @@ Suzuka's figure of eight crosses over itself: the back straight runs over the se
 | W / ↑ | Throttle |
 | S / ↓ | Brake / reverse |
 | A D / ← → | Steer |
-| V | Free camera: fly anywhere with WASD, Q / E down / up, Shift for speed, arrows or a mouse drag to look around, the mouse wheel to dolly. While it's on, your car drives itself on the AI's line. V or C goes back |
+| V | Free camera, flying like creative mode in Minecraft: WASD move across the ground in the direction you face (looking up or down doesn't make it climb or dive), Space (or E) up, Shift (or Q) down, double-tap W to sprint, arrows or a mouse drag to look around, the mouse wheel for a slower or faster flying speed. While it's on, your car drives itself on the AI's line. V or C goes back |
 | C | Cycle camera (chase, far, T-cam, driver, TV); the side mirrors work in every view. The driver view sits at the driver's eyes, behind the halo's slim centre pillar, over a steering wheel that turns with the car and has shift lights and a dash (speed, gear, position, lap, assists and tyre life) |
 | F | Change the front wing at the next pit stop (on / off; also on the HUD) |
 | R | Restart the race from the grid |
