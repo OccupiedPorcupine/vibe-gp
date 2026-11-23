@@ -17,6 +17,12 @@ export const TOUCH = matchMedia('(pointer: coarse)').matches;
 /** 'auto' | 'high' | 'low' (Settings > Graphics; read once, changing it reloads the game). */
 export const GRAPHICS = forced === 'mobile' ? 'low' : forced === 'full' ? 'high' : ['auto', 'high', 'low'].includes(saved) ? saved : 'auto';
 export const MOBILE = forced ? forced === 'mobile' : GRAPHICS === 'low' || (GRAPHICS === 'auto' && TOUCH);
+/**
+ * Anisotropic filtering for textures on the ground. From the driver's eye (~1 m up) the
+ * ground ahead is seen at a grazing angle, where plain mipmapping blurs it to mush past a
+ * few tens of metres. Both backends clamp this to what the GPU supports.
+ */
+export const ANISOTROPY = MOBILE ? 4 : 16;
 
 const SLOW = 1 / 48; // s a frame: slower than this on average and the resolution steps down
 const SMOOTH = 1 / 57; // faster than this for a few seconds and it steps back up

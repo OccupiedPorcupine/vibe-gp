@@ -10,7 +10,7 @@ import { CameraRig } from './camera.js';
 import { LapTimer, StartLights, formatTime } from './race.js';
 import { Hud } from './hud.js';
 import { Settings } from './settings.js';
-import { skyNode, nightSkyNode } from './materials.js';
+import { skyNode, nightSkyNode, hazeNode, haze } from './materials.js';
 import { setFloodMask, nightU, FloodlightPool } from './night.js';
 import { setLandMaps } from './land.js';
 import { LoadingBar, nextFrame } from './loading.js';
@@ -117,9 +117,9 @@ async function start() {
       sky: skyNode(SUN_DIR),
       env: envOf(skyNode(SUN_DIR, { sunDisc: false })),
       envIntensity: 1.0,
-      // aerial perspective: exponential haze in the sky's horizon colour, so distant hills
-      // and woods fade into the sky (~40% at 1 km, ~85% at 2 km) instead of ending at a line
-      fog: [0xcadfee, 0.0007],
+      // aerial perspective (hazeNode): haze in the colour of the sky behind, thinning with
+      // height; ~35% at 1 km, ~57% at 2 km, and all haze before the end of the terrain
+      haze: 0.00042,
       key: { dir: SUN_DIR, color: 0xfff2dd, intensity: 2.2 },
       exposure: 1.0,
     },
@@ -128,13 +128,13 @@ async function start() {
       env: envOf(nightSkyNode(MOON_DIR, { stars: false })),
       envIntensity: 1.0,
       // dark haze: the unlit land beyond the floodlights melts into the night
-      fog: [0x0a0d15, 0.0008],
+      haze: 0.0006,
       key: { dir: FLOOD_DIR, color: 0xf4f6ff, intensity: 1.8 },
       exposure: 1.05,
     },
   };
   pmrem.dispose();
-  scene.fog = new THREE.FogExp2(0xcadfee, 0.0007);
+  scene.fogNode = hazeNode(SUN_DIR, nightU);
 
   const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 4000);
   camera.layers.enable(MIRROR_LAYER); // mirror glass is only drawn by the main view
@@ -157,8 +157,9 @@ async function start() {
     scene.backgroundNode = a.sky;
     scene.environment = a.env;
     scene.environmentIntensity = a.envIntensity;
-    scene.fog.color.setHex(a.fog[0]);
-    scene.fog.density = a.fog[1];
+    haze.density.value = a.haze;
+    // the haze is densest at the circuit's lowest ground (heights are from the start line)
+    haze.base.value = track ? track.path.py.reduce((m, y) => Math.min(m, y), Infinity) : 0;
     sun.color.setHex(a.key.color);
     sun.intensity = a.key.intensity;
     keyDir = a.key.dir;

@@ -5,7 +5,7 @@ import * as THREE from 'three/webgpu';
 import { boxGeometry, ribbonGeometry, planeXZ } from './geometry.js';
 import {
   asphaltMaterial, kerbMaterial, grassMaterial, checkerMaterial, simpleMaterial, layered,
-  gravelMaterial, sausageMaterial, pavedMaterial, runoffMaterial, waterMaterial,
+  gravelMaterial, sausageMaterial, pavedMaterial, runoffMaterial, waterMaterial, fineGrain,
 } from './materials.js';
 import { buildGarageFronts } from './pitBoxes.js';
 import { buildBarriers, slopeNormal } from './barriers.js';
@@ -35,7 +35,7 @@ const ILLUMINATED = {
 function pitLaneMaterial(garageStart, pitch, garages) {
   const m = new THREE.MeshStandardNodeMaterial();
   const p = positionWorld.xz;
-  const grain = mx_noise_float(p.mul(9.0)).mul(0.5).add(0.5);
+  const grain = fineGrain(p);
   const patches = mx_fractal_noise_float(p.mul(0.08), 3).mul(0.5).add(0.5);
   const tarmac = mix(color(0x2c2d30), color(0x3d3e42), grain.mul(0.6).add(patches.mul(0.4)));
   const across = uv().y, along = uv().x;
