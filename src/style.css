@@ -1,4 +1,5 @@
-* { box-sizing: border-box; }
+/* manipulation: no double-tap zoom anywhere (iOS ignores user-scalable=no in the viewport) */
+* { box-sizing: border-box; touch-action: manipulation; }
 html, body {
   margin: 0;
   height: 100%;
