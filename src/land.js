@@ -16,6 +16,7 @@ import * as THREE from 'three/webgpu';
 import { texture, uniform, positionWorld, vec2 } from 'three/tsl';
 import { VERGE } from './terrain.js';
 import { PIT } from './trackPath.js';
+import { ANISOTROPY } from './quality.js';
 
 /** Land kinds, lowest priority first (a later kind is drawn over an earlier one). */
 export const LAND_KINDS = ['urban', 'farmland', 'meadow', 'grass', 'scrub', 'forest', 'sand', 'gravel', 'concrete', 'asphalt', 'water'];
@@ -341,7 +342,12 @@ export class LandMap {
     }
     const tex = new THREE.DataTexture(data, nx, nz, THREE.RGBAFormat, THREE.UnsignedByteType);
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.magFilter = tex.minFilter = THREE.LinearFilter;
+    // mipmapped and anisotropic: from the cockpit the land is seen at a grazing angle,
+    // where an unfiltered 4 m raster shimmers (field edges, roads) as the car moves
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+    tex.anisotropy = ANISOTROPY;
     tex.needsUpdate = true;
     return tex;
   }
