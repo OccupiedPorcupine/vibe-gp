@@ -290,6 +290,8 @@ async function start() {
   const sound = new Sound();
   sound.setMusic(settings.get('music'));
   sound.setSfx(settings.get('sound'));
+  sound.setMusicVolume(settings.get('musicVol'));
+  sound.setSfxVolume(settings.get('sfxVol'));
   startLights.onStep = (green) => sound.startBeep(green);
   // a phone held upright: the #rotate overlay covers the game (style.css), which waits for it
   const upright = matchMedia('(pointer: coarse) and (orientation: portrait) and (max-width: 600px)');
@@ -301,10 +303,12 @@ async function start() {
     physics.abs = settings.get('abs');
     physics.damageOn = settings.get('damage');
   };
-  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS', ai: 'AI OPPONENTS', aiLevel: 'AI DIFFICULTY', laps: 'RACE LAPS', noResets: 'NO RESETS', chaos: 'AI CHAOS', graphics: 'GRAPHICS' };
+  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS', ai: 'AI OPPONENTS', aiLevel: 'AI DIFFICULTY', laps: 'RACE LAPS', noResets: 'NO RESETS', chaos: 'AI CHAOS', graphics: 'GRAPHICS', musicVol: 'MUSIC VOLUME', sfxVol: 'SFX VOLUME' };
   settings.onChange = (id, on) => {
     if (id === 'music') sound.setMusic(on);
     if (id === 'sound') sound.setSfx(on);
+    if (id === 'musicVol') sound.setMusicVolume(on);
+    if (id === 'sfxVol') sound.setSfxVolume(on);
     if (!physics) return;
     applySettings();
     // switching damage off also repairs the car, and clears the bits it left on the track
@@ -321,7 +325,7 @@ async function start() {
     if (id === 'chaos') race?.setChaos(raceOptions().chaos); // live, mid-race too
     // the graphics profile is read as the game starts (the scenery is built for it)
     if (id === 'graphics') setTimeout(() => location.reload(), 400);
-    const value = on === true ? 'ON' : on === false ? 'OFF' : String(on).toUpperCase();
+    const value = on === true ? 'ON' : on === false ? 'OFF' : id.endsWith('Vol') ? `${on}%` : String(on).toUpperCase();
     timer.flash = { text: `${SETTING_NAMES[id]} ${value}`, until: timer.time + 1.5 };
   };
 
@@ -601,6 +605,8 @@ async function start() {
     settings: () => settings.toggle(true),
     quit: () => showMenu(track.def.id),
   });
+  // the gear button mid-race pauses it first: closing Settings goes back to the pause menu
+  settings.onOpen = () => setPaused(true);
   /** Freeze (or unfreeze) the race: no simulation, camera or sound while paused. */
   function setPaused(on) {
     if (paused === on) return;
@@ -662,8 +668,11 @@ async function start() {
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
     if (compiling || upright.matches) return; // loading behind the loading screen, or paused
+    // Settings open: Esc closes it, and the keys don't reach the menus underneath
+    const inSettings = settings.open;
+    if (inSettings && (input.hit('Escape') || input.hit('KeyP'))) settings.toggle(false);
     if (!track) {
-      menu.handleKeys(input);
+      if (!inSettings) menu.handleKeys(input);
       input.endFrame();
       orbit += dt * 0.3;
       camera.position.set(Math.cos(orbit) * 9.5, 3, Math.sin(orbit) * 9.5);
@@ -674,7 +683,7 @@ async function start() {
 
     if (menu.visible) {
       monitor.hide();
-      menu.handleKeys(input);
+      if (!inSettings) menu.handleKeys(input);
       if (freecam.active) freecam.stop();
       // slow orbit behind the menu: close on the car while picking a team, wide for circuits
       closeUp += ((menu.row === 'team' ? 1 : 0) - closeUp) * Math.min(dt * 2.5, 1);
@@ -688,10 +697,10 @@ async function start() {
       camera.lookAt(cx, cy + 0.5 * closeUp, cz);
       syncCar(0);
     } else if (paused) {
-      pauseMenu.handleKeys(input); // the race stays frozen; the cars hold their poses
+      if (!inSettings) pauseMenu.handleKeys(input); // the race stays frozen; the cars hold their poses
       syncCar(0);
     } else {
-      if (input.hit('Escape') || input.hit('KeyP')) setPaused(true);
+      if (!inSettings && (input.hit('Escape') || input.hit('KeyP'))) setPaused(true);
       if (input.hit('KeyV')) {
         if (watching) {
           watch(null); // free cam again, from where the camera is now
