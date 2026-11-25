@@ -207,7 +207,9 @@ export class Hud {
     const dmg = car.damage;
     const wingHurt = dmg.wingHealth < 0.85;
     const wingNext = pitStop?.state === 'service' ? pitStop.changingWing : !!pitStop?.nextWing;
-    setText(e.surface, pitText(pitStop, car) ?? (car.inPitLane ? 'PIT LIMITER 80' : car.onPitLane ? 'PIT LANE' : car.surface === 'gravel' ? 'IN THE GRAVEL' : car.surface === 'grass' || car.surface === 'runoff' ? 'OFF TRACK' : dirt > 0.15 ? 'DIRTY TYRES'
+    // in the air the wheels aren't on any surface: no gravel, grass or dirt to report
+    const surface = car.airborne ? null : car.surface;
+    setText(e.surface, pitText(pitStop, car) ?? (car.inPitLane ? 'PIT LIMITER 80' : car.onPitLane ? 'PIT LANE' : surface === 'gravel' ? 'IN THE GRAVEL' : surface === 'grass' || surface === 'runoff' ? 'OFF TRACK' : surface && dirt > 0.15 ? 'DIRTY TYRES'
       : wingHurt && !wingNext ? 'FRONT WING DAMAGED · F: NEW WING AT THE NEXT STOP' : ''));
     // front wing: condition per half, and whether a new one goes on at the next stop
     dmg.wing.forEach((d, i) => {
