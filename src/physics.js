@@ -110,8 +110,9 @@ const L = A_FRONT + B_REAR;
 // and the floor's share of it (ground effect) fades with height. Pitch and roll rates damp
 // slowly, and at speed the airflow turns the nose towards the flight path, like an arrow's
 // fletching, and the heading towards the direction of travel (a car kicked into a spin
-// turns only part of the way round before it lands). Pitch and roll stop at the cap, which
-// marks the car wrecked.
+// turns only part of the way round before it lands). Pitch and roll stop at the cap (no
+// full flips); that marks nothing by itself: a car is wrecked only by the damage its
+// landing does (CarDamage.undrivable).
 // The ground: points of the car (GROUND in carShape.js: the tyres, the diffuser's tail, the
 // front wing's feet) that come down on the road get a vertical impulse, with the car's mass
 // and its pitch and roll inertia. One end or side on the road while the car turns away from
@@ -127,7 +128,7 @@ export const AIR = {
   yawStiff: 0.0175, // rad/s² of heading turned to the direction of travel, per Pa per rad of sideslip
   yawDamp: 0.07, // 1/s of yaw-rate decay per m/s of speed (the sidepods, fin and rear wing)
   rateDamp: 1.5, // 1/s: pitch and roll rates decay this fast
-  cap: 1.05, // rad (60°): pitch and roll stop here and the car is wrecked
+  cap: 1.05, // rad (60°): pitch and roll stop here (no full flips)
   bounceSpeed: 4, // m/s into the road: a landing harder than this rebounds ...
   bounce: 0.2, // ... at this share of the speed
   scrape: 0.4, // friction of the floor or a wing tip sliding on the road (the tyres roll)
@@ -178,7 +179,6 @@ export class CarPhysics {
     this.airborne = false; // from launch() to touchdown
     this.pitchRate = 0; // rad/s, signs as pitch and roll
     this.rollRate = 0;
-    this.wrecked = false; // pitch or roll reached AIR.cap
     this.contacts = 0; // in the air: GROUND points pressing on the road (0 = clear of it)
     this.launched = false; // launch() since the last step
     this.landHit = null; // the hardest ground hit since leaving the road: { v, pitchRel, rollRel }
@@ -587,12 +587,10 @@ export class CarPhysics {
     if (Math.abs(this.pitch) >= A.cap) {
       this.pitch = Math.sign(this.pitch) * A.cap;
       if (this.pitchRate * this.pitch > 0) this.pitchRate = 0;
-      this.wrecked = true;
     }
     if (Math.abs(this.roll) >= A.cap) {
       this.roll = Math.sign(this.roll) * A.cap;
       if (this.rollRate * this.roll > 0) this.rollRate = 0;
-      this.wrecked = true;
     }
 
     // the wheels spin freely and carry no load

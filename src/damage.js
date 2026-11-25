@@ -56,6 +56,9 @@ export const DAMAGE = {
   tyreCrr: 0.05, // extra rolling resistance coefficient at full damage
   // engine and gearbox
   enginePowerLoss: 0.5, // power lost at full damage
+  // undrivable (wrecked): a car with either can't race on
+  suspensionBroken: 0.6, // any corner's suspension this damaged
+  engineDead: 0.95, // the engine this damaged
   // car-to-car contact (hitPart)
   sidepodCrush: 0.25, // a side hit into the body crushes the sidepod only past this much hit ...
   mirrorCrush: 0.5, // ... and takes the mirror past this much
@@ -167,6 +170,15 @@ export class CarDamage {
         + D.sidepodDrag * (this.sidepod[0] + this.sidepod[1]),
       power: (1 - D.enginePowerLoss * this.engine) * (1 - D.sidepodCooling * (this.sidepod[0] + this.sidepod[1])),
     };
+  }
+
+  /**
+   * Wrecked: too badly damaged to race on, and it can't pit for it (broken suspension or a
+   * dead engine). The one definition of a wrecked car: ai.js retires or respawns an AI car,
+   * and main.js tells the player. How the car is lying (pitch, roll) doesn't come into it.
+   */
+  get undrivable() {
+    return this.suspension.some((x) => x >= D.suspensionBroken) || this.engine >= D.engineDead;
   }
 
   /** Is anything at all damaged? */
