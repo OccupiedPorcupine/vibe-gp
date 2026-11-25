@@ -142,12 +142,16 @@ export const AIR = {
   settleRate: 0.5, // ... and turning slower than this (rad/s)
 };
 
-// Wall hits (wallImpact): impulses at the contact point on the rigid car.
+// Wall hits (wallImpact): impulses at the contact point.
 export const WALL = {
   bounce: 0.3, // the contact point comes off the wall at this share of its closing speed
   friction: 0.46, // the scrub along the wall, per unit of the bounce impulse ...
   scrub: 0.02, // ... plus this much (m/s of the car's speed), so a touch still scrapes
-  damp: 0.5, // the car's rotation kept through a hit (crumpling, the tyres scrubbing)
+  damp: 0.5, // share of the car's rotation a hard hit leaves (crumpling, the tyres scrubbing) ...
+  dampSpeed: 10, // ... closing at this many m/s or more; a lighter touch leaves more, a brush all
+  spin: 0.25, // share of the rigid car's yaw response the hit gets: the wing and nose crumple
+  //             and the contact spreads along the wall (a full share spins cars into a
+  //             second hit, and pins them, far more often than real ones)
 };
 
 export const GEARS = [0, 23, 35, 46, 56, 65, 74, 83, 999]; // m/s upshift points per gear 1..8
@@ -912,6 +916,7 @@ export class CarPhysics {
     pose.height = this.height;
     const prev = carBoxes(pose, (this.prevBoxes ??= []));
     let hit = false;
+    this.wallHit = Math.max(0, this.wallHit - 0.05); // fades even while touching; a hit raises it
     for (let iter = 0; iter < 3; iter++) {
       const boxes = carBoxes(this);
       let best = null;
@@ -940,14 +945,13 @@ export class CarPhysics {
       this.prevPos.x = p.x;
       this.prevPos.z = p.z;
     }
-    if (!hit) this.wallHit = Math.max(0, this.wallHit - 0.05);
   }
 
   /**
    * Push the car out of a wall (nx, nz = unit normal pointing into the wall) and bounce it
-   * off at the contact point (px, pz): impulses on a rigid car (mass and yaw inertia), so an
-   * off-centre hit turns it. Closing speed is the contact point's (a spinning car's swinging
-   * tail hits harder than its centre moves).
+   * off at the contact point (px, pz): impulses on the car (its mass, and its yaw inertia
+   * softened by WALL.spin), so an off-centre hit turns it. The closing speed is the contact
+   * point's (a spinning car's swinging tail hits harder than its centre moves).
    */
   wallImpact(nx, nz, pen, px = this.position.x, pz = this.position.z) {
     const P = PARAMS;
@@ -963,8 +967,8 @@ export class CarPhysics {
         this.impact = vn;
         this.impactSide = nx * Math.cos(this.yaw) - nz * Math.sin(this.yaw);
       }
-      this.yawRate *= WALL.damp; // the impact kills most of the rotation
-      const im = 1 / P.mass, ii = 1 / P.yawInertia;
+      this.yawRate *= 1 - (1 - WALL.damp) * Math.min(1, vn / WALL.dampSpeed); // a hard hit kills most of the rotation
+      const im = 1 / P.mass, ii = WALL.spin / P.yawInertia;
       const apply = (dx, dz, j) => {
         this.vel.x += dx * j * im;
         this.vel.z += dz * j * im;
@@ -981,8 +985,14 @@ export class CarPhysics {
       const kt = rz * tx - rx * tz;
       const vt = this.vel.x * tx + this.vel.z * tz + this.yawRate * kt;
       const stop = Math.abs(vt) / (im + kt * kt * ii);
-      const jt = Math.min(stop, WALL.friction * jn + WALL.scrub * P.mass);
+      const jt = Math.min(stop, WALL.friction * jn);
       apply(tx, tz, -Math.sign(vt) * jt);
+      // and a light touch still scrapes some speed off: at the centre, as it would otherwise
+      // turn the car into the wall at every touch and hold it there
+      const vc = this.vel.x * tx + this.vel.z * tz;
+      const sc = Math.min(Math.abs(vc), WALL.scrub);
+      this.vel.x -= tx * Math.sign(vc) * sc;
+      this.vel.z -= tz * Math.sign(vc) * sc;
       this.wallHit = Math.min(1, Math.max(this.wallHit, vn / 20));
       // which way the wall faces the car decides which front parts take the hit
       if (this.damageOn) {
