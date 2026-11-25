@@ -23,7 +23,7 @@ import { PitCrews } from './pitCrew.js';
 import { COMPOUND_LIST } from './tyres.js';
 import { DAMAGE } from './damage.js';
 import { Sound } from './sound.js';
-import { Race, LEVELS as AI_LEVELS, AIDriver, Entry, racingLine, STYLES } from './ai.js';
+import { Race, LEVELS as AI_LEVELS, AIDriver, Entry, racingLine, STYLES, putBack } from './ai.js';
 import { FreeCam } from './freecam.js';
 import { IncidentMonitor } from './incidents.js';
 import { Director } from './director.js';
@@ -209,6 +209,42 @@ async function start() {
     return autopilot.driver.drive(autopilot.field, race ? race.sinceGreen : startLights.holding ? 0 : 99, dt);
   }
 
+  // ---- a wrecked car: pitched or rolled past 60 degrees in the air (physics.js). The car
+  // driven by hand (yours, or the AI car you've taken the wheel of with G) flashes WRECKED,
+  // and after a moment it's put back on the racing line, repaired, as the AI cars are. Your
+  // car driving itself (free cam, watching, director mode) is its AI driver's to put back.
+  // No resets is about the AI cars: you're always put back (R still restarts the race) ----
+  const WRECK_PAUSE = 2; // s of WRECKED before the car is put back
+  let wreck = null; // { physics, at }: the hand-driven car that was wrecked, and when
+  function wreckCheck() {
+    const e = driving ? watching : null;
+    const p = e ? e.physics : freecam.active || watching || director.on ? null : physics;
+    if (!p?.wrecked) {
+      wreck = null;
+      return;
+    }
+    if (wreck?.physics !== p) {
+      wreck = { physics: p, at: timer.time };
+      timer.flash = { text: 'WRECKED', until: timer.time + WRECK_PAUSE, warn: true };
+      return;
+    }
+    if (timer.time - wreck.at < WRECK_PAUSE) {
+      // it stays up over the parts breaking as it lands: they're about to be repaired anyway
+      if (timer.flash?.text !== 'WRECKED') timer.flash = { text: 'WRECKED', until: wreck.at + WRECK_PAUSE, warn: true };
+      return;
+    }
+    wreck = null;
+    if (e) e.driver.respawn(race.entries);
+    else {
+      if (!race && soloLine?.path !== track.path) soloLine = { path: track.path, line: racingLine(track.path) };
+      putBack(physics, race?.line ?? soloLine.line, race?.entries ?? [], race?.player ?? null);
+      applySettings(); // reset() puts the aids back to their defaults
+      pitStop.reset();
+    }
+    rig.initialised = false; // the camera starts again behind the car where it is now
+    timer.flash = { text: 'BACK ON TRACK', until: timer.time + 1.5 };
+  }
+
   // ---- watching another car: in free cam, click it in the timing tower. The camera views
   // (C) ride on that car instead, [ and ] step to the car ahead / behind, G takes the wheel
   // (your own car drives itself meanwhile) and V goes back to free cam ----
@@ -306,12 +342,13 @@ async function start() {
     physics.abs = settings.get('abs');
     physics.damageOn = settings.get('damage');
   };
-  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS', ai: 'AI OPPONENTS', aiLevel: 'AI DIFFICULTY', laps: 'RACE LAPS', noResets: 'NO RESETS', chaos: 'AI CHAOS', graphics: 'GRAPHICS', musicVol: 'MUSIC VOLUME', sfxVol: 'SFX VOLUME' };
+  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS', ai: 'AI OPPONENTS', aiLevel: 'AI DIFFICULTY', laps: 'RACE LAPS', noResets: 'NO RESETS', chaos: 'AI CHAOS', graphics: 'GRAPHICS', musicVol: 'MUSIC VOLUME', sfxVol: 'SFX VOLUME', boxes: 'COLLISION BOXES' };
   settings.onChange = (id, on) => {
     if (id === 'music') sound.setMusic(on);
     if (id === 'sound') sound.setSfx(on);
     if (id === 'musicVol') sound.setMusicVolume(on);
     if (id === 'sfxVol') sound.setSfxVolume(on);
+    if (id === 'boxes') shapes.toggle(on);
     if (!physics) return;
     applySettings();
     // switching damage off also repairs the car, and clears the bits it left on the track
@@ -724,7 +761,7 @@ async function start() {
       COMPOUND_LIST.forEach((c, i) => input.hit(`Digit${i + 1}`) && pickCompound(c));
       if (input.hit('KeyF')) toggleWing();
       if (import.meta.env.DEV && input.hit('KeyL')) (watching ? watching.physics : physics).launch({ vy: 6, pitchRate: -1.5 }); // debug: launch the viewed car
-      if (input.hit('KeyO')) timer.flash = { text: `COLLISION BOXES ${shapes.toggle() ? 'ON' : 'OFF'}`, until: timer.time + 1.5 };
+      if (input.hit('KeyO')) settings.set('boxes', !settings.get('boxes')); // the same switch as in Settings
       if (input.hit('KeyM')) {
         if (!race) timer.flash = { text: 'DIRECTOR MODE NEEDS AI OPPONENTS', until: timer.time + 2, warn: true };
         else {
@@ -767,6 +804,7 @@ async function start() {
         }
         // the AI cars, then car-to-car contact (after the timer, so a finish flash wins)
         race?.stepAI(startLights.holding, FIXED, { damage: settings.get('damage'), resets: aiResets(), takeover: driving ? watching : null, controls });
+        wreckCheck();
         acc -= FIXED;
       }
       syncCar(dt);
