@@ -16,6 +16,8 @@
 // 5. Airborne and landing (#20, #22) on the Test Oval and Spa.
 // 6. The start: a brake held as the car is released (the lights going out, off the jacks)
 //    holds it on its brakes instead of selecting reverse.
+// 7. Pit boxes (#40): an AI car sent into box 0 (nearest the pit entry), a middle box and
+//    the last box on a few circuits: it stops on its marks with no wall contact on the way in.
 //
 // Exits 1 if any check fails.
 globalThis.location ??= { search: '' };
@@ -1047,6 +1049,62 @@ console.log('\nairborne (Test Oval, and a crest at Spa)');
     }
     check(back < -3 && back2 < -3, 'reversing still works: braked to a stop and held, or pressed at a standstill',
       `${(-back).toFixed(1)} m/s and ${(-back2).toFixed(1)} m/s backwards`);
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// 7. Pit boxes (#40): the working lane in front of the garages opens only 12 m before the
+//    first one, and a car heading for box 0 used to cut across into the fast lane's outer
+//    wall. Each run starts an AI car 500 m before the pit entry, told to stop this lap, and
+//    counts its wall contact frames in the lane until the crew has it (stopped on the marks)
+{
+  console.log('\npit boxes (first, middle, last)');
+  const dt = 1 / 120;
+  for (const id of ['suzuka', 'monaco', 'montreal', 'lasvegas', 'zandvoort']) {
+    const T = new TrackPath(TRACKS.find((t) => t.id === id));
+    const n = T.pit.garageCount, L = T.length;
+    for (const k of [0, Math.floor(n / 2), n - 1]) {
+      const player = new CarPhysics(T, T.gridPose(0));
+      const race = new Race(T, TEAMS[TEAMS.length - 1], player, TEAMS, { opponents: 1, laps: 5, level: 'normal', seed: 1, chaos: 0 });
+      player.reset(T.poseAt((T.pit.mainS[0] + L / 2) % L)); // out of the way
+      const e = race.entries.find((x) => !x.isPlayer), car = e.physics;
+      e.pitStop.setBox(T.pit, k);
+      const s0 = (((T.pit.mainS[0] - 500) % L) + L) % L;
+      const pose = T.poseAt(s0, race.line.latAt(s0));
+      car.reset(pose);
+      car.damageOn = false; // a flying start on Monaco's kerbs can break it before the lane
+      const v0 = race.line.vAt(s0) * 0.9;
+      car.vel.x = Math.sin(pose.yaw) * v0;
+      car.vel.z = Math.cos(pose.yaw) * v0;
+      car.speed = v0;
+      for (const w of car.wheels) w.omega = v0 / w.r;
+      race.sinceGreen = 30;
+      race.stepAI(false, dt, { resets: true }); // one step first: onPitLane is left over from the grid
+      e.driver.planLap = e.lap;
+      e.driver.pit = { phase: 'enter', compound: car.compound, wing: false, served: false };
+      e.pitStop.nextCompound = car.compound;
+      let t = 0, lane = null, stopped = null, wall = 0, worst = 0, at = null;
+      while (t < 120 && stopped === null && !e.driver.missedBox) {
+        player.step({ throttle: 0, brake: 0, steer: 0, hold: true }, dt);
+        race.stepAI(false, dt, { resets: true });
+        t += dt;
+        if (car.onPitLane) {
+          lane ??= t;
+          if (car.wallHit > 0.05) {
+            wall++;
+            worst = Math.max(worst, car.wallHit * 20);
+          }
+        }
+        if (e.pitStop.state === 'service') {
+          stopped = t;
+          at = e.pitStop.offset(car);
+        }
+      }
+      check(stopped !== null && wall === 0, `${id} box ${k + 1} of ${n}: into the box, no wall on the way in`,
+        stopped !== null
+          ? `stopped ${(stopped - lane).toFixed(1)} s after entering the lane, ${at.along.toFixed(2)} m along / ${at.across.toFixed(2)} m across / ${at.yaw.toFixed(2)} rad off the marks; wall frames ${wall}${wall ? ` (up to ${worst.toFixed(1)} m/s)` : ''}`
+          : `not stopped (${e.driver.missedBox ? 'missed the box' : e.pitStop.state}); wall frames ${wall}`);
+    }
   }
 }
 
