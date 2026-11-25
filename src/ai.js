@@ -25,7 +25,7 @@ import { TYRE, COMPOUNDS, COMPOUND_LIST, tempGrip, wearGrip } from './tyres.js';
 import { PIT, angleDiff } from './trackPath.js';
 import { PitStop } from './pitStop.js';
 import { AI_PACE } from './tracks/aipace.js';
-import { BOXES, carBoxes, carHull, boxOverlap, boxGone } from './carShape.js';
+import { BOXES, HULL, carBoxes, carHull, boxOverlap, boxGone } from './carShape.js';
 import { DAMAGE } from './damage.js';
 
 const LINE_MARGIN = 1.5; // m between the racing line and the edge of the asphalt (car half width + a bit)
@@ -247,6 +247,7 @@ function spreadStyle(st, v, quirk = [0, 0, 0]) {
 const PIT_DECIDE = 700; // m before the lane leaves the track: the driver decides whether to stop this lap
 const PIT_STOP_DECEL = 3; // m/s² rolling into the box, so it stops on the marks
 const PIT_IN = 2.5; // m inside the track edge where the lane counts as having left the track
+const PIT_ROOM = HULL.y1 + 0.5; // m: the car's aim in the lane stays this far inside its garage-side edge
 const MEDIUM_LIFE = 0.6; // share of the race distance a set of mediums lasts (see Race)
 const PIT_SCRUB = 1.2; // tyre wear in racing against the compound's clean-driving rate (sliding)
 const smooth = (a, b, x) => {
@@ -704,7 +705,15 @@ export class AIDriver {
       const latAt = (x) => box.lat * (pt.served ? 1 - smooth(box.s + 4, box.s + 40, x) : smooth(box.s - 50, box.s - 12, x));
       look = 4 + v * 0.3;
       const a = sl + look;
-      tgt = a <= pit.length ? pit.poseAt(a, latAt(a)) : P.poseAt(pit.exitS + a - pit.length, Math.max(-P.hw + 2, Math.min(P.hw - 2, pit.mainLat[pit.N - 1])));
+      // but no further across than the lane has room for, both where the car is and where it
+      // aims: the working lane in front of the garages opens only 12 m before the first one,
+      // so a car aiming for box 0 cut across into the fast lane's outer wall (#40)
+      const room = (x) => pit.outerHw(Math.max(0, Math.min(pit.N - 1, Math.round(x / pit.ds)))) - PIT_ROOM;
+      const aimLat = (x) => {
+        const l = latAt(x);
+        return l * pit.outer > 0 ? pit.outer * Math.min(Math.abs(l), room(sl), room(x)) : l;
+      };
+      tgt = a <= pit.length ? pit.poseAt(a, aimLat(a)) : P.poseAt(pit.exitS + a - pit.length, Math.max(-P.hw + 2, Math.min(P.hw - 2, pit.mainLat[pit.N - 1])));
       vt = g.vAt(sl + 2 + v * 0.08);
       const dB = box.s - sl;
       if (!pt.served) {

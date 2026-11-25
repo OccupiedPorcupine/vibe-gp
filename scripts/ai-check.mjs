@@ -6,6 +6,8 @@
 //
 // Prints each car's best lap, finishing order, wall contacts, off-track time, respawns and
 // its tyres: the compound of each stint (S-M: started on softs, one stop for mediums).
+// Pit stops: how many, the time from entering the pit lane to leaving it, and the wall
+// contact frames in the pit lane, by box (0 = the garage nearest the pit entry).
 // logos.js builds Path2D objects at import time (browser only): stub it for Node
 globalThis.location ??= { search: "" };
 globalThis.matchMedia ??= () => ({ matches: false, addEventListener() {} });
@@ -37,6 +39,8 @@ AIDriver.prototype.respawn = function (field) {
   stats.get(this.entry).respawn++;
   return origRespawn.call(this, field);
 };
+const pits = { stops: 0, laneTime: 0, wall: 0, byBox: new Map(), boxes: new Set() }; // pit lane totals
+const inLane = new Map(); // entry -> race time it entered the pit lane
 const stints = new Map(race.entries.map((e) => [e, [e.physics.compound.letter]]));
 race.onPit = (e) => stints.get(e).push(`${e.physics.compound.letter}@${(e.progress / P.length).toFixed(1)}`);
 console.log(`tyre wear x${race.wearScale.toFixed(2)} for the race distance`);
@@ -54,6 +58,23 @@ while (race.finishOrder.length < race.entries.filter((e) => !e.retired).length &
   for (const e of race.entries) {
     const s = stats.get(e);
     if (e.physics.wallHit > 0.05) s.wall++;
+    const box = e.pitStop?.box?.k;
+    if (e.physics.onPitLane) {
+      if (!inLane.has(e)) inLane.set(e, { t: race.time, stints: stints.get(e).length });
+      if (e.physics.wallHit > 0.05) {
+        pits.wall++;
+        pits.byBox.set(box, (pits.byBox.get(box) ?? 0) + 1);
+      }
+    } else if (inLane.has(e)) {
+      // a stop: serviced on this run down the lane (not a respawn out of it, or a missed box)
+      const lane = inLane.get(e);
+      if (stints.get(e).length > lane.stints) {
+        pits.stops++;
+        pits.laneTime += race.time - lane.t;
+        pits.boxes.add(box);
+      }
+      inLane.delete(e);
+    }
     if (['grass', 'gravel', 'runoff'].includes(e.physics.surface)) s.off++;
     if (e.lap !== s.lastLap && e.lap >= 1) {
       if (s.lapStart !== null && !e.finished) s.best = Math.min(s.best, race.time - s.lapStart);
@@ -66,6 +87,7 @@ while (race.finishOrder.length < race.entries.filter((e) => !e.retired).length &
 const ms = performance.now() - tSim;
 console.log(`car-to-car contacts: ${CONTACTS.touches} (hard, > 5 m/s: ${CONTACTS.hard}), launches: ${CONTACTS.launches}`);
 if (CONTACTS.parts.size) console.log(`  by parts: ${[...CONTACTS.parts].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(', ')}`);
+console.log(`pit stops: ${pits.stops} (boxes ${[...pits.boxes].sort((a, b) => a - b).join(' ')}), pit lane ${pits.stops ? (pits.laneTime / pits.stops).toFixed(1) : '--'} s a stop on average; pit-lane wall frames ${pits.wall}${pits.wall ? ` (by box: ${[...pits.byBox].sort((a, b) => a[0] - b[0]).map(([k, n]) => `${k}: ${n}`).join(', ')})` : ''}`);
 console.log(`simulated ${(race.time).toFixed(0)} s in ${(ms / 1000).toFixed(1)} s (${((ms / frames) * 1000 / race.entries.length).toFixed(0)} µs per car-step)`);
 for (const e of race.order) {
   const s = stats.get(e);
