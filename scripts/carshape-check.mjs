@@ -79,6 +79,19 @@ check('left wheels are on the left', by.wheelFL.y0 > 0 && by.wheelRL.y0 > 0 && b
   check('worked out again once the car moves', carBoxes(car) === boxes && near(boxes[0].cx, before + 1));
   car.yaw = 0;
   check('...or turns', near(carBoxes(car)[0].fz, 1));
+  // on a slope: each box sits on the road carried along the slope to its centre
+  const hill = { position: { x: 0, z: 0 }, yaw: 0, height: 2, gradeF: 0.03, gradeL: -0.02 };
+  const hb = carBoxes(hill, []);
+  const nose = hb.find((b) => b.def.name === 'nose'), gb = hb.find((b) => b.def.name === 'gearbox'), wfl = hb.find((b) => b.def.name === 'wheelFL');
+  const mid = (d) => [(d.x0 + d.x1) / 2, (d.y0 + d.y1) / 2];
+  check('slope: nose raised uphill', near(nose.h0, 2 + 0.03 * mid(nose.def)[0] + nose.def.h0), `${nose.h0}`);
+  check('slope: gearbox lowered downhill', near(gb.h0, 2 + 0.03 * mid(gb.def)[0] + gb.def.h0) && gb.h0 < 2, `${gb.h0}`);
+  check('slope: across the car', near(wfl.h0, 2 + 0.03 * mid(wfl.def)[0] - 0.02 * mid(wfl.def)[1]), `${wfl.h0}`);
+  // two cars in line down a 3% slope: the one ahead sits lower, but its rear wing still
+  // clears the nose behind
+  const up = { position: { x: 0, z: 0 }, yaw: 0, height: 0.17, gradeF: -0.03 }, down = { position: { x: 0, z: 5.6 }, yaw: 0, height: 0, gradeF: -0.03 };
+  const rw = carBoxes(down, []).find((b) => b.def.name === 'rearWing'), nz = carBoxes(up, []).find((b) => b.def.name === 'nose');
+  check('slope: a nose still fits under the rear wing of a car downhill', !boxOverlap(nz, rw) && rw.h0 > nz.h1, `rear wing from ${rw.h0.toFixed(3)}, nose to ${nz.h1.toFixed(3)}`);
   // hull: same pose as the boxes
   const hull = carHull(car);
   check('hull in world', near(hull.fz, 1) && near(hull.hx, (HULL.x1 - HULL.x0) / 2) && near(hull.h1, 5 + HULL.h1) && hull.def === HULL);

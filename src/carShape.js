@@ -91,8 +91,9 @@ const cache = new WeakMap(); // car → { x, z, yaw, h, boxes }
 /**
  * The car's boxes in world space: { cx, cz, fx, fz, hx, hy, h0, h1, def }. Centre
  * (cx, cz); unit forward axis (fx, fz) = (sin yaw, cos yaw), left axis (fz, −fx); half
- * length hx, half width hy; world heights h0, h1 (road height + the box's); def its BOXES
- * entry. In BOXES order.
+ * length hx, half width hy; world heights h0, h1 (the box's above the road, where the road
+ * is the height under the car carried along its slope, gradeF / gradeL, to the box's
+ * centre); def its BOXES entry. In BOXES order.
  *
  * Without `out`, the boxes are cached on the car and only worked out again once it has
  * moved, so a car is transformed once per step however many pairs it is tested in. The
@@ -100,12 +101,12 @@ const cache = new WeakMap(); // car → { x, z, yaw, h, boxes }
  * that array (and its objects) instead.
  */
 export function carBoxes(car, out) {
-  const p = car.position, yaw = car.yaw, h = car.height ?? 0;
+  const p = car.position, yaw = car.yaw, h = car.height ?? 0, gf = car.gradeF ?? 0, gl = car.gradeL ?? 0;
   if (!out) {
     let c = cache.get(car);
-    if (c && c.x === p.x && c.z === p.z && c.yaw === yaw && c.h === h) return c.boxes;
+    if (c && c.x === p.x && c.z === p.z && c.yaw === yaw && c.h === h && c.gf === gf && c.gl === gl) return c.boxes;
     if (!c) cache.set(car, (c = { boxes: [] }));
-    c.x = p.x; c.z = p.z; c.yaw = yaw; c.h = h;
+    c.x = p.x; c.z = p.z; c.yaw = yaw; c.h = h; c.gf = gf; c.gl = gl;
     out = c.boxes;
   }
   for (let k = 0; k < BOXES.length; k++) place((out[k] ??= {}), car, BOXES[k], LOCAL[k]);
@@ -119,7 +120,10 @@ export function carHull(car, out = {}) {
 }
 
 function place(b, car, def, l) {
-  const p = car.position, h = car.height ?? 0;
+  const p = car.position;
+  // the road under the box: the height under the car, plus the slope out to the box's centre
+  // (so two cars on a hill stay level with each other; the car's own pitch and roll aren't in)
+  const h = (car.height ?? 0) + (car.gradeF ?? 0) * l.mx + (car.gradeL ?? 0) * l.my;
   const fx = Math.sin(car.yaw), fz = Math.cos(car.yaw); // forward; left is (fz, -fx)
   b.cx = p.x + fx * l.mx + fz * l.my;
   b.cz = p.z + fz * l.mx - fx * l.my;
