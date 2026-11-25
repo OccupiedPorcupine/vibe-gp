@@ -42,7 +42,7 @@ Suzuka's figure of eight crosses over itself: the back straight runs over the se
 | G (watching a car) | Take the wheel of the car you're watching: you drive it with your own assists while your car drives itself. 1-3 and F set its next pit stop, R puts it back on the track, and G hands it back to its AI driver, which carries on from where you left it |
 | C | Cycle camera (chase, far, T-cam, driver, TV); the side mirrors work in every view. The driver view sits at the driver's eyes, behind the halo's slim centre pillar, over a steering wheel that turns with the car and has shift lights and a dash (speed, gear, position, lap, assists and tyre life) |
 | F | Change the front wing at the next pit stop (on / off; also on the HUD) |
-| O | Show the cars' collision boxes (debug): solid parts cyan, wings orange, wheels yellow; a box that touches another car flashes red |
+| O | Show the cars' collision boxes (debug): solid parts cyan, wings orange, wheels yellow; a box that touches another car flashes red. Also in Settings → Display → Debug, for touch screens; off each time the game loads |
 | R | Restart the race from the grid |
 | Esc / P | Pause menu: resume, restart the race, settings, or change car or circuit. The race also pauses when the window loses focus |
 

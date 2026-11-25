@@ -1,6 +1,7 @@
 // Settings: a centred popup (like the pause menu) opened from the gear button in the top-right
 // corner or from the pause menu. Tabs split it into Race, Audio, Display and Controls. The
-// values are saved to localStorage so they survive reloads and track changes.
+// values are saved to localStorage so they survive reloads and track changes (all but the
+// `session` ones, which start from their defaults each time the game loads).
 
 const KEY = 'vibegp.settings';
 const DEFAULTS = {
@@ -8,6 +9,7 @@ const DEFAULTS = {
   music: true, musicVol: 100, sound: true, sfxVol: 100,
   ai: true, aiLevel: 'normal', laps: 5, noResets: false, chaos: 40,
   graphics: 'auto',
+  boxes: false, // the collision boxes overlay (debug; also key O)
 };
 
 const TABS = [
@@ -19,7 +21,7 @@ const TABS = [
 
 // A row is a switch (on / off), `choices` (a segmented picker) or `range` ([min, max, step]
 // slider, applied while it moves). `group` starts a heading inside the tab; `needs` dims and
-// disables the row while that switch is off.
+// disables the row while that switch is off; `session` rows aren't saved.
 const ROWS = [
   { tab: 'race', group: 'Driver aids', id: 'tc', name: 'Traction control', desc: 'Traction, stability and steering assists' },
   { tab: 'race', id: 'abs', name: 'ABS', desc: 'Anti-lock brakes' },
@@ -34,11 +36,15 @@ const ROWS = [
   { tab: 'audio', group: 'Sound effects', id: 'sound', name: 'Play sound effects', desc: 'Engine, tyres, wind, crashes and start lights' },
   { tab: 'audio', id: 'sfxVol', name: 'Volume', aria: 'Sound effects volume', range: [0, 100, 5], unit: '%', needs: 'sound' },
   { tab: 'display', group: 'Graphics', id: 'graphics', name: 'Quality', desc: 'Auto lowers the resolution when the frame rate drops. Low suits slower computers. Reloads the game', choices: ['auto', 'high', 'low'] },
+  { tab: 'display', group: 'Debug', id: 'boxes', name: 'Collision boxes', desc: 'Every car\'s collision boxes, red where they touch another car (key O)', session: true },
 ];
+const SESSION = new Set(ROWS.filter((r) => r.session).map((r) => r.id));
 
 function load() {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') };
+    const saved = JSON.parse(localStorage.getItem(KEY) || '{}');
+    for (const id of SESSION) delete saved[id];
+    return { ...DEFAULTS, ...saved };
   } catch {
     return { ...DEFAULTS };
   }
@@ -179,7 +185,9 @@ export class Settings {
   set(id, value) {
     this.values[id] = value;
     try {
-      localStorage.setItem(KEY, JSON.stringify(this.values));
+      const saved = { ...this.values };
+      for (const k of SESSION) delete saved[k];
+      localStorage.setItem(KEY, JSON.stringify(saved));
     } catch {
       /* storage unavailable: the setting still applies for this session */
     }

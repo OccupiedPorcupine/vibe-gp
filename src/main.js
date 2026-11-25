@@ -306,12 +306,13 @@ async function start() {
     physics.abs = settings.get('abs');
     physics.damageOn = settings.get('damage');
   };
-  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS', ai: 'AI OPPONENTS', aiLevel: 'AI DIFFICULTY', laps: 'RACE LAPS', noResets: 'NO RESETS', chaos: 'AI CHAOS', graphics: 'GRAPHICS', musicVol: 'MUSIC VOLUME', sfxVol: 'SFX VOLUME' };
+  const SETTING_NAMES = { tc: 'TRACTION CONTROL', abs: 'ABS', damage: 'DAMAGE', music: 'MUSIC', sound: 'SOUND EFFECTS', ai: 'AI OPPONENTS', aiLevel: 'AI DIFFICULTY', laps: 'RACE LAPS', noResets: 'NO RESETS', chaos: 'AI CHAOS', graphics: 'GRAPHICS', musicVol: 'MUSIC VOLUME', sfxVol: 'SFX VOLUME', boxes: 'COLLISION BOXES' };
   settings.onChange = (id, on) => {
     if (id === 'music') sound.setMusic(on);
     if (id === 'sound') sound.setSfx(on);
     if (id === 'musicVol') sound.setMusicVolume(on);
     if (id === 'sfxVol') sound.setSfxVolume(on);
+    if (id === 'boxes') shapes.toggle(on);
     if (!physics) return;
     applySettings();
     // switching damage off also repairs the car, and clears the bits it left on the track
@@ -724,7 +725,7 @@ async function start() {
       COMPOUND_LIST.forEach((c, i) => input.hit(`Digit${i + 1}`) && pickCompound(c));
       if (input.hit('KeyF')) toggleWing();
       if (import.meta.env.DEV && input.hit('KeyL')) (watching ? watching.physics : physics).launch({ vy: 6, pitchRate: -1.5 }); // debug: launch the viewed car
-      if (input.hit('KeyO')) timer.flash = { text: `COLLISION BOXES ${shapes.toggle() ? 'ON' : 'OFF'}`, until: timer.time + 1.5 };
+      if (input.hit('KeyO')) settings.set('boxes', !settings.get('boxes')); // the same switch as in Settings
       if (input.hit('KeyM')) {
         if (!race) timer.flash = { text: 'DIRECTOR MODE NEEDS AI OPPONENTS', until: timer.time + 2, warn: true };
         else {
