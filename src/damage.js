@@ -61,6 +61,7 @@ export const DAMAGE = {
   mirrorCrush: 0.5, // ... and takes the mirror past this much
   noseWing: 0.5, // share of a hit on the nose's tip that each front wing half takes
   diffuser: 0.5, // share of a hit on the gearbox that the floor (diffuser) on that side takes
+  wingCrush: 0.1, // m a wing is crushed past its limit (ai.js) for a full hit: a fast clip snaps it, a steady shove bends it
 };
 
 /**

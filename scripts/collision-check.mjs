@@ -10,8 +10,9 @@
 //    ends up inside a wall. Each scenario lists what the old 1.4 m centre circle did
 //    (BASELINE) next to what the physics does now.
 // 4. Car-to-car scenarios (#16) on Suzuka's start straight: an endplate clipping a rear
-//    tyre, a nose under a rear wing, a T-bone and a 2 s rub side by side. Each checks which
-//    parts took damage and how the cars moved.
+//    tyre, a nose under a rear wing, a T-bone, a 2 s rub side by side, and a wing held
+//    against a tyre on full throttle. Each checks which parts took damage and how the cars
+//    moved.
 //
 // Exits 1 if any check fails.
 globalThis.location ??= { search: '' };
@@ -367,7 +368,7 @@ console.log('\ncar-to-car scenarios (Suzuka start straight)');
       const kick = v - prevV;
       if (k > 12) {
         maxPush = Math.max(maxPush, Math.abs(across(B) - before));
-        if (Math.abs(kick) > 0.02) {
+        if (Math.abs(kick) > 0.05) { // a jolt of 0.6 g for a step; smaller ones are tyres settling
           if (prevKick && Math.sign(kick) !== Math.sign(prevKick)) flips++;
           prevKick = kick;
         }
@@ -382,6 +383,46 @@ console.log('\ncar-to-car scenarios (Suzuka start straight)');
     expect('side by side: no jitter over 2 s', maxPush < 0.002 && flips <= 2 && maxYaw < 0.1, `push ${(maxPush * 1000).toFixed(2)} mm, ${flips} back-and-forth kicks, yaw rate ${maxYaw.toFixed(3)} rad/s`);
     expect('side by side: a small shove, not a bounce', apart > 1.9 && apart < 2.5, `${apart.toFixed(2)} m apart`);
     expect('side by side: no hard contact, no damage', c.hard === 0 && total(A) + total(B) === 0, `hard ${c.hard}; A ${damaged(A)} | B ${damaged(B)}`);
+  }
+
+  // --- 5. A steady push: a wing held against a tyre on full throttle, too slowly to break it
+  for (const damageOn of [true, false]) {
+    // A's left endplate behind B's right rear tyre; A on full throttle, B cruising, for 3 s
+    const A = car(0, 0, 30), B = car(5.0, 1.75, 30);
+    A.damageOn = B.damageOn = damageOn;
+    // Driving through shows as A still closing on B across their contact (the relative
+    // speed along the deepest overlap's normal) while the wing is held at its crush limit.
+    // Before that, the wing crumples by design: A's throttle against the wing's 0.2 g builds
+    // a closing speed over those 0.1 m (shown, not checked). After a wing breaks off (damage
+    // on), A's tyre driving on into B's is a new contact.
+    let deepest = 0, crumple = 0, held = 0, wasHeld = false, inContact = 0, touchingAtEnd = false;
+    const LIMIT = 0.095;
+    run(A, B, 360, { throttle: 1 }, { throttle: 0.3 }, () => {
+      let d = null;
+      const on = (c, def) => !(def.part === 'wing' && c.damage.broken(def.i)); // a broken-off wing isn't there
+      for (const a of carBoxes(A)) for (const b of carBoxes(B)) {
+        if (!on(A, a.def) || !on(B, b.def)) continue;
+        const h = boxOverlap(a, b);
+        if (h && (!d || h.depth > d.depth)) d = h;
+      }
+      touchingAtEnd = !!d;
+      if (!d) { wasHeld = false; return; }
+      deepest = Math.max(deepest, d.depth);
+      inContact++;
+      const closing = -((B.vel.x - A.vel.x) * d.nx + (B.vel.z - A.vel.z) * d.nz);
+      const atLimit = d.depth >= LIMIT;
+      if (atLimit && wasHeld) held = Math.max(held, closing);
+      else if (!atLimit) crumple = Math.max(crumple, closing);
+      wasHeld = atLimit;
+    });
+    const endGap = vAlong(A) - vAlong(B);
+    const tag = `steady push, damage ${damageOn ? 'on' : 'off'}`;
+    console.log(`    ${tag}: deepest ${deepest.toFixed(3)} m over ${inContact} steps of contact; closing at most ${crumple.toFixed(2)} m/s short of the limit, ${held.toFixed(2)} m/s held at it; A ${vAlong(A).toFixed(1)} B ${vAlong(B).toFixed(1)} m/s at the end${touchingAtEnd ? ', still touching' : ''} | A ${damaged(A)}`);
+    expect(`${tag}: the wing doesn't sink in`, deepest < 0.15, `deepest ${deepest.toFixed(3)} m`);
+    expect(`${tag}: the car behind can't drive through`, inContact > 0 && held < 0.5 && (!touchingAtEnd || Math.abs(endGap) < 0.5),
+      `held at the limit closing up to ${held.toFixed(2)} m/s; ${touchingAtEnd ? `still touching, A ${endGap.toFixed(2)} m/s faster` : 'apart at the end'}`);
+    if (damageOn) expect(`${tag}: the wing bends (and in the end breaks)`, A.damage.wing[0] > 0.05, damaged(A));
+    else expect(`${tag}: no damage`, total(A) + total(B) === 0, damaged(A));
   }
 }
 

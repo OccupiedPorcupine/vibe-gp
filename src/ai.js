@@ -883,10 +883,16 @@ const CONTACT = {
   e: 0.25, // restitution of a solid contact ...
   bounceSpeed: 1, // ... closing at this speed (m/s) or more; slower ones don't bounce (a rub stays a rub)
   friction: 0.3, // side-to-side friction, as a share of the push (a tap from behind isn't ice)
-  // a wing touching something mostly crumples or breaks: it passes on a push of at most this
-  // (m/s² on each car, about 0.2 g), and the cars are only partly pushed apart each step
+  sameWay: 0.85, // contacts whose normals are within ~30° of the deepest's share its spin point
+  // a wing touching something gives way: it passes on a push of at most this (m/s² on each
+  // car, about 0.2 g), and the overlap is left to grow as it crumples ...
   fragileShove: 2,
-  fragilePush: 0.3,
+  // ... up to this (m): then it is bent as far as it goes. Driven in any further at more
+  // than wingSnap (m/s, at the contact) it snaps off; slower, the structure behind it takes
+  // the push (the overlap beyond the limit is pushed out like a solid part's), and each
+  // step's crush past the limit bends it further (DAMAGE.wingCrush) until it breaks.
+  fragileCrush: 0.1,
+  wingSnap: 3,
   fragileHurt: 0.3, // damage a wing does to what it hits, relative to a solid part
   damageScale: 0.8, // closing speed × this, then like a wall impact (cars give a little)
   fresh: 60, // steps (0.5 s) apart before a pair's next touch counts as a new one
@@ -898,6 +904,16 @@ const touching = []; // this step's overlapping box pairs: { i, j, hit } (reused
 const hitA = { amount: new Float64Array(N_BOX), x: new Float64Array(N_BOX), z: new Float64Array(N_BOX) };
 const hitB = { amount: new Float64Array(N_BOX), x: new Float64Array(N_BOX), z: new Float64Array(N_BOX) };
 const isSolid = (d) => d.kind !== 'fragile';
+const crushed = { depth: 0, nx: 0, nz: 0, px: 0, pz: 0 }; // a wing contact past its crush limit (reused)
+
+/** Velocity of the car's body at world point (px, pz): its CoG's plus its spin about it. */
+function pointVel(car, px, pz, out) {
+  // a +yaw rotation moves an offset (rx, rz) from the CoG along (rz, -rx)
+  out.x = car.vel.x + car.yawRate * (pz - car.position.z);
+  out.z = car.vel.z - car.yawRate * (px - car.position.x);
+  return out;
+}
+const va = { x: 0, z: 0 }, vb = { x: 0, z: 0 };
 
 /** A wing that has broken off isn't on the car any more. */
 function gone(car, d) {
@@ -909,7 +925,8 @@ function gone(car, d) {
  * Contact between two cars: a hull test, then every part box against every part box.
  * Solid parts push the cars apart along their single deepest overlap (and spin them from
  * its contact point), so the push holds steady instead of jittering between parts. If only
- * wings touch, a small shove, capped as a force (a wing gives way rather than push). Each part that touched takes damage from the
+ * wings touch, a small shove, capped as a force (a wing gives way rather than push), until
+ * a wing is crushed past fragileCrush: then the structure behind it takes the push. Each part that touched takes damage from the
  * closing speed across its own overlap.
  * Returns undefined (not touching), or the closing speed of a new touch (0 if it carries on).
  */
@@ -930,32 +947,64 @@ function collidePair(A, B, dt) {
       t.i = i; t.j = j; t.hit = hit;
       if (isSolid(ba[i].def) && isSolid(bb[j].def)) {
         if (!solid || hit.depth > solid.depth) solid = hit;
-      } else if (!fragile || hit.depth > fragile.depth) fragile = hit;
+      }
     }
   }
   if (n === 0) return;
+  // Wings: short of their crush limit, they only give the small, capped shove below. Past
+  // it, driven in fast they snap off; slowly, each step's crush bends them further, and one
+  // still on takes the push of the overlap beyond the limit, like a solid part.
+  for (let k = 0; k < n; k++) {
+    const { i, j, hit } = touching[k];
+    const da = ba[i].def, db = bb[j].def;
+    if (isSolid(da) && isSolid(db)) continue;
+    const excess = hit.depth - CONTACT.fragileCrush;
+    if (excess > 0) {
+      pointVel(A, hit.px, hit.pz, va);
+      pointVel(B, hit.px, hit.pz, vb);
+      const snap = -((vb.x - va.x) * hit.nx + (vb.z - va.z) * hit.nz) > CONTACT.wingSnap;
+      if (!isSolid(da)) crush(A, da, snap ? Infinity : excess);
+      if (!isSolid(db)) crush(B, db, snap ? Infinity : excess);
+      if (gone(A, da) || gone(B, db)) continue; // it broke off: nothing left to push
+      if (!solid || excess > solid.depth) solid = Object.assign(crushed, hit, { depth: excess });
+    } else if (!fragile || hit.depth > fragile.depth) fragile = hit;
+  }
 
-  // the parts that touched, and how hard: the closing speed across each overlap
-  const rvx = B.vel.x - A.vel.x, rvz = B.vel.z - A.vel.z;
+  // the parts that touched, and how hard: the closing speed across each overlap, at its
+  // contact point (a spinning car's swinging tail hits harder than its centre moves)
   let speed = 0, sx = 0, sz = 0, first = 0;
   hitA.amount.fill(0); hitB.amount.fill(0);
   const ta = (A.touched ??= new Float64Array(N_BOX).fill(-1e9)), tb = (B.touched ??= new Float64Array(N_BOX).fill(-1e9));
   for (let k = 0; k < n; k++) {
     const { i, j, hit } = touching[k];
     ta[i] = tb[j] = stepNo;
-    const closing = Math.max(0, -(rvx * hit.nx + rvz * hit.nz));
+    pointVel(A, hit.px, hit.pz, va);
+    pointVel(B, hit.px, hit.pz, vb);
+    const closing = Math.max(0, -((vb.x - va.x) * hit.nx + (vb.z - va.z) * hit.nz));
     if (closing > speed) { speed = closing; sx = hit.nx; sz = hit.nz; first = k; }
     const h = damageHit(closing);
     record(hitA, i, h * (isSolid(bb[j].def) ? 1 : CONTACT.fragileHurt), hit);
     record(hitB, j, h * (isSolid(ba[i].def) ? 1 : CONTACT.fragileHurt), hit);
   }
 
-  // push apart along the deepest overlap: in full for solid parts, partly for wings
+  // push apart along the deepest overlap (solid parts only: a wing short of its limit gives way)
   const c = solid ?? fragile;
+  if (!c) return 0; // only wings that just broke off
   const { nx, nz } = c; // from A to B
-  const push = (solid ? c.depth : c.depth * CONTACT.fragilePush) / 2;
+  const push = solid ? c.depth / 2 : 0;
   A.position.x -= nx * push; A.position.z -= nz * push;
   B.position.x += nx * push; B.position.z += nz * push;
+  // where it lands, for the spin: the middle of all the contacts pushing this way, wings
+  // too (a rub that touches at the rear wheels and the front wing spins the cars from
+  // between them, not from whichever end is deepest this step, which would see-saw them)
+  let px = 0, pz = 0, w = 0;
+  for (let k = 0; k < n; k++) {
+    const { hit } = touching[k];
+    if (hit.nx * nx + hit.nz * nz < CONTACT.sameWay) continue;
+    if (gone(A, ba[touching[k].i].def) || gone(B, bb[touching[k].j].def)) continue;
+    px += hit.px; pz += hit.pz; w++;
+  }
+  if (w > 0) { px /= w; pz /= w; } else { px = c.px; pz = c.pz; }
   const vr = (B.vel.x - A.vel.x) * nx + (B.vel.z - A.vel.z) * nz; // < 0: closing
   if (vr < 0) {
     const e = CONTACT.e * Math.min(1, -vr / CONTACT.bounceSpeed);
@@ -969,8 +1018,8 @@ function collidePair(A, B, dt) {
     A.vel.x += tx * ft; A.vel.z += tz * ft;
     B.vel.x -= tx * ft; B.vel.z -= tz * ft;
     // spin from where the hit lands (off-centre hits turn the car)
-    spin(A, c.px, c.pz, -nx * j - tx * ft, -nz * j - tz * ft);
-    spin(B, c.px, c.pz, nx * j + tx * ft, nz * j + tz * ft);
+    spin(A, px, pz, -nx * j - tx * ft, -nz * j - tz * ft);
+    spin(B, px, pz, nx * j + tx * ft, nz * j + tz * ft);
   }
 
   if (speed > 0) {
@@ -990,6 +1039,11 @@ function collidePair(A, B, dt) {
   const pair = [ba[touching[first].i].def.name, bb[touching[first].j].def.name].sort().join('>');
   CONTACTS.parts.set(pair, (CONTACTS.parts.get(pair) ?? 0) + 1);
   return speed;
+}
+
+/** A wing crushed `depth` m further past its limit: it bends by that much (DAMAGE.wingCrush); Infinity snaps it. */
+function crush(car, d, depth) {
+  if (car.damageOn) car.damage.hitPart(d.part, d.i, Math.min(depth / DAMAGE.wingCrush, 1));
 }
 
 /** Keep a box's hardest hit this step, and where it landed. */
