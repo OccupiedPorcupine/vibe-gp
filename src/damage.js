@@ -62,13 +62,15 @@ export const DAMAGE = {
   noseWing: 0.5, // share of a hit on the nose's tip that each front wing half takes
   diffuser: 0.5, // share of a hit on the gearbox that the floor (diffuser) on that side takes
   wingCrush: 0.1, // m a wing is crushed past its limit (ai.js) for a full hit: a fast clip snaps it, a steady shove bends it
-  // landings (landing()): the speed into the road at the point that came down
-  landMin: 2.5, // m/s: softer than this is free (the suspension takes it)
-  landFull: 9, // m/s: a full hit (≈ a 4 m drop)
+  // landings (landing()): how hard a corner was hit, as the speed of a quarter of the car
+  // landing on it (physics.js: the push it took over a quarter of the car's mass)
+  landMin: 3, // m/s: softer than this is free (≈ a 0.5 m drop: the suspension takes it)
+  landFull: 8.5, // m/s: a full hit (≈ a 3.7 m drop)
   landTilt: 1.5, // a landing tilted from flat is worse: × (1 + this × sin(tilt))
   landSuspension: 0.8, // a tyre's corner: its suspension, per unit of hit ...
   landFloor: 0.35, // ... the floor on that side (the plank bottoms out) ...
   landTyre: 0.5, // ... and its tyre, by the hit past this
+  landShare: 0.3, // share of a tyre's hit the anti-roll bar passes to the other tyre on its axle
 };
 
 /**
@@ -234,24 +236,30 @@ export class CarDamage {
   }
 
   /**
-   * The car came down on the road at one of its ground points (GROUND in carShape.js) at
-   * `speed` m/s into it; tilt (rad): how far from flat it was against the road, the larger
-   * of pitch and roll. Suspension and the floor take a landing first, the tyre too on a hard
+   * The car came down on the road at one of its ground points (GROUND in carShape.js);
+   * speed: how hard (m/s). For a tyre, the push its suspension took, as the speed of a
+   * quarter of the car landing there (physics.js shares it with the other tyre on the axle
+   * first); for the tail or a wing tip, the speed it hit the road at. tilt (rad): how far
+   * from flat it was against the road, the larger of pitch and roll. Suspension and the floor take a landing first, the tyre too on a hard
    * one; a tilted landing (nose first, on one wheel) puts it all through fewer points and is
    * worse. On a tail or wing tip: the floor (diffuser) or that wing.
    */
-  landing(point, speed, tilt = 0) {
-    const hit = Math.min(1.5, ((speed - D.landMin) / (D.landFull - D.landMin)) * (1 + D.landTilt * Math.sin(Math.min(Math.abs(tilt), Math.PI / 2))));
-    if (hit <= 0) return;
+  landing(point, speed, tilt = 0, from = 0) {
+    // from: a hit this corner has already been charged for in the same landing (it's growing)
+    const k = 1 + D.landTilt * Math.sin(Math.min(Math.abs(tilt), Math.PI / 2));
+    const hitAt = (v) => Math.min(1.5, Math.max(0, (v * k - D.landMin) / (D.landFull - D.landMin)));
+    const hit = hitAt(speed), was = hitAt(from);
+    if (hit <= was) return;
+    const past = (x, t) => Math.max(0, x - t);
     if (point.wheel !== null) {
       const c = point.wheel;
-      this.add('suspension', c, hit * D.landSuspension);
-      this.add('floor', c % 2, hit * D.landFloor);
-      this.add('tyre', c, (hit - D.landTyre) * K.tyre);
+      this.add('suspension', c, (hit - was) * D.landSuspension);
+      this.add('floor', c % 2, (hit - was) * D.landFloor);
+      this.add('tyre', c, (past(hit, D.landTyre) - past(was, D.landTyre)) * K.tyre);
     } else if (point.part === 'floor') {
-      this.add('floor', point.side, hit * K.floor);
-      this.add('engine', null, (hit - 0.6) * 0.25); // a hard hit on the tail shakes the gearbox
-    } else if (point.part === 'wing') this.add('wing', point.side, hit * K.wing);
+      this.add('floor', point.side, (hit - was) * K.floor);
+      this.add('engine', null, (past(hit, 0.6) - past(was, 0.6)) * 0.25); // a hard hit on the tail shakes the gearbox
+    } else if (point.part === 'wing') this.add('wing', point.side, (hit - was) * K.wing);
   }
 
   add(part, side, amount) {

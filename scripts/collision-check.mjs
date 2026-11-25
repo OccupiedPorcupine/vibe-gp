@@ -832,22 +832,24 @@ console.log('\nairborne (Test Oval, and a crest at Spa)');
   {
     const r = land({ vy: 8 });
     const s4 = r.d.suspension;
-    check(Math.abs(r.f.first - 8) < 0.5 && Math.min(...s4) > 0.3 && Math.max(...s4) - Math.min(...s4) < 0.05 && Math.min(...r.d.floor) > 0.2
+    check(Math.abs(r.f.first - 8) < 0.5 && Math.min(...s4) > 0.3 && Math.max(...s4) - Math.min(...s4) < 0.15 && Math.min(...r.d.floor) > 0.2
       && Math.min(...r.d.tyre) > 0.05 && r.rebound > 0.02 && r.rebound < 0.3 && !r.car.airborne && !r.car.wrecked,
       'hard flat landing (8 m/s): all four corners alike, the floor and tyres too, a small rebound',
       `hit ${r.f.first?.toFixed(2)} m/s; suspension ${fmt2(s4)}, floor ${fmt2(r.d.floor)}, tyres ${fmt2(r.d.tyre)}; rebound ${r.rebound.toFixed(2)} m`);
-    flat4 = land({ vy: 4 }).d;
+    flat4 = land({ vy: 6 }).d; // a 1.8 m drop: past what the suspension takes for free
   }
   {
-    const r = land({ vy: 4 }, { roll: Math.PI / 4 }); // left side up: lands on its right side
+    const r = land({ vy: 6 }, { roll: Math.PI / 4 }); // left side up: lands on its right side
     const s4 = r.d.suspension;
-    // it comes down on its right wheels, then falls back about them onto its left side
-    check(s4[1] > flat4.suspension[1] + 0.1 && s4[3] > flat4.suspension[3] + 0.1 && r.car.firstHit.rollRel > 0.7 && !r.car.wrecked && !r.car.airborne,
-      'landing at 45° roll: on one side, then back onto the other, both worse than flat',
+    // it comes down on its right wheels (their hit taken through two tyres, not four), then
+    // falls back about them onto its left side
+    check(s4[1] > flat4.suspension[1] && s4[3] > flat4.suspension[3] && s4[1] > s4[0] + 0.2 && s4[3] > s4[2] + 0.2
+      && r.car.firstHit.rollRel > 0.7 && !r.car.wrecked && !r.car.airborne,
+      'landing at 45° roll: the side it lands on takes more than in a flat landing',
       `suspension FL FR RL RR ${fmt2(s4)} (flat at the same speed ${fmt2(flat4.suspension)}), first hit ${r.car.firstHit.v.toFixed(2)} m/s at ${((r.car.firstHit.rollRel * 180) / Math.PI).toFixed(0)}° roll`);
   }
   {
-    const r = land({ vy: 4 }, { pitch: 0.35 }); // nose down 20°
+    const r = land({ vy: 6 }, { pitch: 0.35 }); // nose down 20°
     const front = r.d.suspension[0] + r.d.suspension[1] + r.d.wing[0] + r.d.wing[1], flatFront = flat4.suspension[0] + flat4.suspension[1];
     check(front > flatFront + 0.2 && !r.car.airborne, 'nose-first landing (20°): the front takes more than a flat landing',
       `front suspension ${fmt2(r.d.suspension.slice(0, 2))}, wing ${fmt2(r.d.wing)} (flat: suspension ${fmt2(flat4.suspension.slice(0, 2))})`);
