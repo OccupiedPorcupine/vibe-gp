@@ -28,7 +28,7 @@ import { CAR_DIMS, WHEELS } from './car.js';
 import { KERB_WIDTH, PIT } from './trackPath.js';
 import { SURFACES, TYRE, COMPOUNDS, tyreForce, tempGrip, wearGrip, peakForce, rollingCoef } from './tyres.js';
 import { CarDamage, DAMAGE } from './damage.js';
-import { carBoxes } from './carShape.js';
+import { carBoxes, boxGone } from './carShape.js';
 
 const G = 9.81;
 const RHO = 1.225; // air density, kg/m^3
@@ -589,6 +589,7 @@ export class CarPhysics {
       let best = null;
       for (let k = 0; k < boxes.length; k++) {
         const b = boxes[k], from = hit ? b : prev[k];
+        if (boxGone(this, b.def)) continue; // it broke off: nothing there to hit the wall
         const c = T.wallContactBox(b, from.cx, from.cz, this.height);
         if (c && (!best || c.depth > best.depth)) best = c;
       }

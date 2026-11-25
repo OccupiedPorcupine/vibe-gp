@@ -25,7 +25,7 @@ import { TYRE, COMPOUNDS, COMPOUND_LIST, tempGrip, wearGrip } from './tyres.js';
 import { PIT, angleDiff } from './trackPath.js';
 import { PitStop } from './pitStop.js';
 import { AI_PACE } from './tracks/aipace.js';
-import { BOXES, carBoxes, carHull, boxOverlap } from './carShape.js';
+import { BOXES, carBoxes, carHull, boxOverlap, boxGone } from './carShape.js';
 import { DAMAGE } from './damage.js';
 
 const LINE_MARGIN = 1.5; // m between the racing line and the edge of the asphalt (car half width + a bit)
@@ -916,10 +916,7 @@ function pointVel(car, px, pz, out) {
 const va = { x: 0, z: 0 }, vb = { x: 0, z: 0 };
 
 /** A wing that has broken off isn't on the car any more. */
-function gone(car, d) {
-  if (d.part === 'wing') return car.damage?.broken(d.i);
-  return d.part === 'rearWing' && car.damage?.rearWingBroken;
-}
+const gone = boxGone;
 
 /**
  * Contact between two cars: a hull test, then every part box against every part box.
