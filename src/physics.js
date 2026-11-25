@@ -145,8 +145,10 @@ export class CarPhysics {
     this.speed = 0; // signed forward speed (m/s)
     this.longAccel = 0;
     this.latAccel = 0;
-    this.pitch = 0; // rad, + = nose down: the suspension's tilt on the ground, the real angle in the air
-    this.roll = 0; // rad, + = left side up
+    // rad, + = nose down / left side up. On the ground: the suspension's tilt against the
+    // road. In the air: the car's real attitude, measured from the horizon.
+    this.pitch = 0;
+    this.roll = 0;
     this.heave = 0;
     this.air = 0; // m: the car's reference point above the road (0 on the ground)
     this.vy = 0; // m/s: vertical speed, + = up
@@ -292,9 +294,9 @@ export class CarPhysics {
       if (w.surface.bump) bump += Math.sin((w.dist / w.surface.bumpWavelength) * Math.PI * 2) * 0.004 * w.surface.bump;
     }
     if (!this.airborne) {
-      // on the ground: the suspension's tilt (after a landing, it settles back to this)
-      this.pitch += (clamp(-this.longAccel * 0.0012, -0.035, 0.035) - this.pitch) * kf;
-      this.roll += (clamp(this.latAccel * 0.0012, -0.04, 0.04) - this.roll) * kf;
+      // on the ground: the suspension's tilt against the road
+      this.pitch += (this.tiltPitch() - this.pitch) * kf;
+      this.roll += (this.tiltRoll() - this.roll) * kf;
     }
     this.heave = this.airborne ? 0 : bump * Math.min(absV / 20, 1);
     // parked and all but stopped: static friction holds it, even on a steep slope
@@ -328,10 +330,21 @@ export class CarPhysics {
     for (const w of this.wheels) w.omega = 0;
   }
 
+  /** The suspension's tilt on the ground (+ = nose down), from the braking or acceleration. */
+  tiltPitch() {
+    return clamp(-this.longAccel * 0.0012, -0.035, 0.035);
+  }
+
+  /** The suspension's roll on the ground (+ = left side up), from the cornering. */
+  tiltRoll() {
+    return clamp(this.latAccel * 0.0012, -0.04, 0.04);
+  }
+
   /**
    * Leave the ground: vy (m/s, + up), pitchRate and rollRate (rad/s, + = nose down, left side
    * up). The single way a car takes off. While already in the air, adds to the current speed
-   * and rates.
+   * and rates. In the air pitch and roll are measured from the horizon, so they take in the
+   * road's slope here and the car's attitude doesn't jump.
    */
   launch({ vy = 0, pitchRate = 0, rollRate = 0 } = {}) {
     this.vy += vy;
@@ -344,19 +357,25 @@ export class CarPhysics {
     this.rollRate = rollRate;
     // the lowest corner leaves from the road (the suspension's tilt dips one end a little)
     this.air = Math.max(0, -lowestCorner(this.pitch, this.roll).h) + 1e-6;
+    this.pitch -= Math.atan(this.gradeF);
+    this.roll += Math.atan(this.gradeL);
     this.still = false;
   }
 
   /**
    * Touchdown: back on the tyres. vyImpact is the downward speed (m/s) of the corner that
-   * landed (for a bounce, landing damage and wrecks).
+   * landed, against the road; pitchRel and rollRel the car's attitude against the road there
+   * (for a bounce, landing damage and wrecks: a nose-first or one-wheel landing).
    */
-  onLand(vyImpact) {
+  onLand(vyImpact, pitchRel, rollRel) {
     this.airborne = false;
     this.air = 0;
     this.vy = 0;
     this.pitchRate = 0;
     this.rollRate = 0;
+    // pitch and roll are the suspension's tilt against the road again
+    this.pitch = this.tiltPitch();
+    this.roll = this.tiltRoll();
   }
 
   /** A sub-step in the air: ballistic, with drag and aero, and no tyre forces. */
@@ -416,11 +435,15 @@ export class CarPhysics {
     this.longAccel += (ex - this.longAccel) * ks;
     this.latAccel += (0 - this.latAccel) * ks;
 
-    // touchdown: the lowest corner of the car's outline reaches the road
-    const c = lowestCorner(this.pitch, this.roll);
+    // touchdown: the lowest corner of the car's outline reaches the road (the attitude
+    // against the road's slope under the car decides which corner that is)
+    const pitchRel = this.pitch + Math.atan(this.gradeF), rollRel = this.roll - Math.atan(this.gradeL);
+    const c = lowestCorner(pitchRel, rollRel);
     if (this.air + c.h <= 0) {
       const vCorner = this.vy - Math.cos(this.pitch) * this.pitchRate * c.x + Math.cos(this.roll) * this.rollRate * c.y;
-      this.onLand(Math.max(0, -vCorner));
+      // the road rises or falls under a car moving over a slope
+      const vRoad = vx * this.gradeF + (this.vel.x * cos - this.vel.z * sin) * this.gradeL;
+      this.onLand(Math.max(0, vRoad - vCorner), pitchRel, rollRel);
     }
   }
 

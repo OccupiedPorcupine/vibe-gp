@@ -103,9 +103,9 @@ const cache = new WeakMap(); // car → { x, z, yaw, h, gf, gl, air, pitch, roll
  * (cx, cz); unit forward axis (fx, fz) = (sin yaw, cos yaw), left axis (fz, −fx); half
  * length hx, half width hy; world heights h0, h1 (the box's above the road, where the road
  * is the height under the car carried along its slope, gradeF / gradeL, to the box's
- * centre, plus the car's height above the road, air; in the air, pitch and roll also tilt
- * it: −sin(pitch)·x + sin(roll)·y at its centre, its range widened to take in its tilted
- * ends); def its BOXES entry. In BOXES order.
+ * centre; in the air instead the car's height, road + air, tilted by pitch and roll from
+ * the horizon: −sin(pitch)·x + sin(roll)·y at its centre, its range widened to take in its
+ * tilted ends); def its BOXES entry. In BOXES order.
  *
  * Without `out`, the boxes are cached on the car and only worked out again once it has
  * moved, so a car is transformed once per step however many pairs it is tested in. The
@@ -136,18 +136,19 @@ export function carHull(car, out = {}) {
 
 function place(b, car, def, l) {
   const p = car.position;
-  // the road under the box: the height under the car, plus the slope out to the box's centre
-  // (so two cars on a hill stay level with each other), plus the car's height above the road
-  let h = (car.height ?? 0) + (car.gradeF ?? 0) * l.mx + (car.gradeL ?? 0) * l.my + (car.air ?? 0);
-  // in the air, the car's own pitch (+ = nose down) and roll (+ = left side up) tilt the box:
-  // its centre rises or drops, and its height range widens to take in its tilted ends and
-  // sides. On the ground pitch and roll are only the suspension's tilt and aren't counted.
-  let ext = 0;
+  // On the ground: the road under the box, i.e. the height under the car plus the slope out
+  // to the box's centre (so two cars on a hill stay level with each other); pitch and roll
+  // are only the suspension's tilt there and aren't counted.
+  // In the air: the car's own height (road + air), tilted by its pitch (+ = nose down) and
+  // roll (+ = left side up), which are measured from the horizon; the road's slope no longer
+  // matters. The box's centre rises or drops, and its height range widens to take in its
+  // tilted ends and sides.
+  let h = car.height ?? 0, ext = 0;
   if (car.airborne) {
     const sp = Math.sin(car.pitch ?? 0), sr = Math.sin(car.roll ?? 0);
-    h += -sp * l.mx + sr * l.my;
+    h += (car.air ?? 0) - sp * l.mx + sr * l.my;
     ext = Math.abs(sp) * l.hx + Math.abs(sr) * l.hy;
-  }
+  } else h += (car.gradeF ?? 0) * l.mx + (car.gradeL ?? 0) * l.my;
   const fx = Math.sin(car.yaw), fz = Math.cos(car.yaw); // forward; left is (fz, -fx)
   b.cx = p.x + fx * l.mx + fz * l.my;
   b.cz = p.z + fz * l.mx - fx * l.my;

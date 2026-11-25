@@ -471,9 +471,10 @@ console.log('\ncar-to-car scenarios (Suzuka start straight)');
 }
 
 // ---------------------------------------------------------------------------------------
-// In the air (#20): CarPhysics.launch() on the Test Oval, stepped at 120 Hz. Every step of
+// In the air (#20): CarPhysics.launch() on the Test Oval (and over a crest at Spa), stepped
+// at 120 Hz. Every step of
 // every flight is checked for NaN.
-console.log('\nairborne (Test Oval)');
+console.log('\nairborne (Test Oval, and a crest at Spa)');
 {
   const G = 9.81;
   const finite = (c) => [c.position.x, c.position.z, c.vel.x, c.vel.z, c.yaw, c.yawRate, c.air, c.vy, c.pitch, c.roll, c.pitchRate, c.rollRate, c.height, c.speed]
@@ -643,6 +644,70 @@ console.log('\nairborne (Test Oval)');
     const nose = boxes.find((b) => b.def.name === 'nose'), gear = boxes.find((b) => b.def.name === 'gearbox');
     check(worst < 1e-9 && nose.h0 > gear.h0 + 1, 'in the air: boxes rise with air and tilt with pitch and roll',
       `nose ${nose.h0.toFixed(2)}–${nose.h1.toFixed(2)} m, gearbox ${gear.h0.toFixed(2)}–${gear.h1.toFixed(2)} m`);
+  }
+
+  // over a crest (Spa, the biggest change of grade over 40 m on a straight): in the air pitch
+  // is measured from the horizon, so the road falling away under the car doesn't tilt it.
+  // The same launch on the flat Test Oval flies the same attitude.
+  {
+    const SP = new TrackPath(TRACKS.find((tr) => tr.id === 'spa'));
+    const k = Math.round(40 / SP.ds);
+    let crest = 0, drop = -1;
+    for (let i = 0; i < SP.N; i++) {
+      const dg = SP.grade[i] - SP.grade[SP.wrap(i + k)];
+      if (dg > drop && Math.abs(SP.curvature[i]) < 0.004) [drop, crest] = [dg, i];
+    }
+    const pose = SP.poseAt(crest * SP.ds - 5);
+    const a = new CarPhysics(SP, pose), b = rolling(0);
+    for (let i = 0; i < 12; i++) a.step({ throttle: 0, brake: 0, steer: 0 }, dt);
+    for (const c of [a, b]) {
+      const f = [Math.sin(c.yaw), Math.cos(c.yaw)];
+      c.vel.x = f[0] * 25;
+      c.vel.z = f[1] * 25;
+      for (const w of c.wheels) w.omega = 25 / w.r;
+    }
+    const before = a.pitch, slope = Math.atan(a.gradeF);
+    a.launch({ vy: 6 });
+    b.pitch = a.pitch; // the flat car leaves with the same attitude to the horizon
+    b.roll = a.roll;
+    b.launch({ vy: 6 });
+    check(Math.abs(a.pitch - (before - slope)) < 1e-12, 'launched on a slope: pitch now from the horizon, no jump',
+      `road ${((slope * 180) / Math.PI).toFixed(1)}°, pitch ${((before * 180) / Math.PI).toFixed(1)}° on the road → ${((a.pitch * 180) / Math.PI).toFixed(1)}° from the horizon`);
+    let diff = 0, lo = Infinity, hi = -Infinity, landed = null, boxErr = 0;
+    const own = a.onLand;
+    a.onLand = function (v, pr, rr) {
+      landed = { v, pr, rr, want: this.pitch + Math.atan(this.gradeF) };
+      return own.call(this, v, pr, rr);
+    };
+    while (a.airborne && b.airborne) {
+      a.step({ throttle: 0, brake: 0, steer: 0 }, dt);
+      b.step({ throttle: 0, brake: 0, steer: 0 }, dt);
+      if (!finite(a)) nan++;
+      if (!a.airborne || !b.airborne) break;
+      diff = Math.max(diff, Math.abs(a.pitch - b.pitch));
+      const road = Math.atan(a.gradeF);
+      [lo, hi] = [Math.min(lo, road), Math.max(hi, road)];
+      // its boxes: road height + air, tilted from the horizon, no road slope
+      const sp = Math.sin(a.pitch), sr = Math.sin(a.roll);
+      for (const box of carBoxes(a)) {
+        const d = box.def, mx = (d.x0 + d.x1) / 2, my = (d.y0 + d.y1) / 2;
+        const want = a.height + a.air - sp * mx + sr * my - Math.abs(sp) * box.hx - Math.abs(sr) * box.hy + d.h0;
+        boxErr = Math.max(boxErr, Math.abs(box.h0 - want));
+      }
+    }
+    // the flat car lands first (the road falls away under the other): fly the other one down
+    for (let i = 0; i < 600 && a.airborne; i++) {
+      a.step({ throttle: 0, brake: 0, steer: 0 }, dt);
+      if (!finite(a)) nan++;
+    }
+    delete a.onLand;
+    const deg = (x) => ((x * 180) / Math.PI).toFixed(2);
+    check(hi - lo > 0.0175 && diff < 0.002, 'over a crest: pitch holds to the horizon, not the road',
+      `the road under it turned ${deg(hi - lo)}°; pitch differs from the same flight on flat ground by ${deg(diff)}°`);
+    check(boxErr < 1e-9, 'over a crest: box heights are height + air, tilted from the horizon', `worst ${boxErr.toExponential(1)} m`);
+    check(landed && Math.abs(landed.pr - landed.want) < 1e-12 && Math.abs(a.pitch) <= 0.035,
+      'touchdown on a slope: onLand gets the attitude against the road, then the tilt is back on the road',
+      landed ? `pitchRel ${deg(landed.pr)}°, lands at ${landed.v.toFixed(2)} m/s, pitch now ${deg(a.pitch)}°` : 'never landed');
   }
   check(nan === 0, 'no NaN in any flight', `${nan} bad steps`);
 }
