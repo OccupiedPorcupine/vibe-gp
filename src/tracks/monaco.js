@@ -74,6 +74,7 @@ export default {
   ],
   // pit lane from OSM, from where it leaves the track to where it rejoins
   pitlane: {
+    hug: true, // OSM draws it midway to the Swimming Pool: pull it in beside the start straight
     points: [
       [137.3, -293.6], [131.7, -291.9], [127.7, -287.7], [125.4, -282.3], [124.4, -276.4], [123.9, -262.3], [123.4, -256.4], [121.4, -250.9],
       [117.9, -246], [107.3, -234], [101, -226.3], [96.2, -219.8], [88.9, -207.8], [80.2, -192], [75.8, -183], [68.6, -166.5],

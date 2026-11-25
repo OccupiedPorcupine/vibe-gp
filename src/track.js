@@ -555,9 +555,9 @@ export class Track {
     }
 
     if (gLen <= 0) return;
-    // garage block: facade on the lane's outer wall line, 16 m deep, 8 m tall
+    // garage block: facade on the lane's outer wall line, PIT.garageDepth deep, 8 m tall
     const front = (j) => pit.outerHw(j) + PIT.wallClear;
-    const depth = 16, height = 8;
+    const depth = PIT.garageDepth, height = 8;
     const j0 = Math.ceil(pit.garageStart / pit.ds), j1 = Math.floor(pit.garageEnd / pit.ds);
     // y is relative to the lane; the block's foot (y = 0) is sunk 1 m so it never floats on a slope
     const at = (j, lat, y) => [pit.px[j] + pit.leftX(j) * o * lat, pit.py[j] + (y === 0 ? -1 : y), pit.pz[j] + pit.leftZ(j) * o * lat];

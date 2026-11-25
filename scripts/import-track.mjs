@@ -481,7 +481,8 @@ ${corners.map((k) => `    { name: ${JSON.stringify(k.name)}, at: ${k.at} },`).jo
 ${fmt(points)}
   ],${pit ? `
   // pit lane from OSM, from where it leaves the track to where it rejoins
-  pitlane: {
+  pitlane: {${c.pitHug ? `
+    hug: true, // ${c.pitHug}` : ''}
     points: [
 ${fmt(pit).replace(/^ {4}/gm, '      ')}
     ],
