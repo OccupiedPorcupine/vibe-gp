@@ -1164,18 +1164,23 @@ export class Race {
           this.leaderDone = true;
           for (const o of this.entries) if (!o.finished && !o.retired) o.flagAt = Math.min(this.laps * L, (Math.floor(o.progress / L) + 1) * L);
         }
-        this.onFinish?.(e, this.finishOrder.length);
+        this.rank();
+        this.onFinish?.(e, e.position);
       }
     }
     this.rank();
   }
 
   rank() {
+    // by distance covered (a finished car's stops at its flag), so a lapped car that takes the
+    // flag first still classifies behind the cars finishing their last lap on the lead lap;
+    // cars that finished on the same lap in the order they crossed the line
+    const L = this.path.length;
+    const dist = (e) => (e.finished ? (e.flagAt ?? this.laps * L) : e.progress);
     const sorted = [...this.entries].sort((a, b) => {
-      if (a.finished && b.finished) return this.finishOrder.indexOf(a) - this.finishOrder.indexOf(b);
-      if (a.finished !== b.finished) return a.finished ? -1 : 1;
       if (a.retired !== b.retired) return a.retired ? 1 : -1; // retired cars at the bottom
-      return b.progress - a.progress;
+      if (a.finished && b.finished && dist(a) === dist(b)) return this.finishOrder.indexOf(a) - this.finishOrder.indexOf(b);
+      return dist(b) - dist(a);
     });
     sorted.forEach((e, i) => (e.position = i + 1));
     this.order = sorted;
