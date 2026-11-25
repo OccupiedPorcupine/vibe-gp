@@ -26,7 +26,7 @@
 // Barriers are explicit polylines (this.walls): the two main walls, opened where the
 // pit lane merges, pulled in to form the pit wall where the lane runs beside the
 // track, plus the pit lane's outer wall and short closing walls at the merges. The
-// car collides against their segments (wallContact), so any layout works.
+// car's collision boxes collide with their segments (wallContactBox), so any layout works.
 import { CatmullRomCurve3, Vector3 } from 'three/webgpu';
 import { RUNOFF } from './tracks/runoff.js';
 import { speedProfile, findCorners, wantedWalls, clearWidened, autoSurfaces } from './runoffPlan.js';
@@ -834,67 +834,6 @@ export class TrackPath {
   }
 
   /**
-   * Deepest wall contact for a circle of radius r that moved from (px, pz) to (x, z).
-   * Returns { nx, nz, pen } (unit normal from the wall towards the side the circle
-   * came from, and how far to push it out) or null. Moving through a wall counts.
-   * y (optional): the road height under the circle; walls of a section on another level
-   * (a bridge overhead or the road below it) are ignored.
-   */
-  wallContact(x, z, px, pz, r, y = null) {
-    const c = this.segCell, S = this.seg;
-    const tick = ++this.segTick;
-    const x0 = Math.floor((Math.min(x, px) - r) / c), x1 = Math.floor((Math.max(x, px) + r) / c);
-    const z0 = Math.floor((Math.min(z, pz) - r) / c), z1 = Math.floor((Math.max(z, pz) + r) / c);
-    let best = null;
-    for (let gx = x0; gx <= x1; gx++) {
-      for (let gz = z0; gz <= z1; gz++) {
-        const list = this.segGrid.get(cellKey(gx, gz));
-        if (!list) continue;
-        for (const s of list) {
-          if (this.segStamp[s] === tick) continue;
-          this.segStamp[s] = tick;
-          if (y !== null && Math.abs(S.ay[s] - y) > GRADE_SEP) continue;
-          const ax = S.ax[s], az = S.az[s];
-          const ex = S.bx[s] - ax, ez = S.bz[s] - az;
-          const len2 = ex * ex + ez * ez;
-          if (len2 < 1e-9) continue;
-          const len = Math.sqrt(len2);
-          const d1 = ex * (pz - az) - ez * (px - ax); // signed distances × len, + = left of a→b
-          const d2 = ex * (z - az) - ez * (x - ax);
-          const side = d1 >= 0 ? 1 : -1;
-          let nx, nz, pen = -1;
-          if (d1 * d2 < 0) {
-            const t = d1 / (d1 - d2);
-            const ix = px + (x - px) * t, iz = pz + (z - pz) * t;
-            const u = ((ix - ax) * ex + (iz - az) * ez) / len2;
-            if (u >= 0 && u <= 1) {
-              nx = (-ez / len) * side;
-              nz = (ex / len) * side;
-              pen = Math.abs(d2) / len + r;
-            }
-          }
-          if (pen < 0) {
-            const u = Math.max(0, Math.min(1, ((x - ax) * ex + (z - az) * ez) / len2));
-            const qx = x - (ax + ex * u), qz = z - (az + ez * u);
-            const d = Math.hypot(qx, qz);
-            if (d >= r) continue;
-            if (d > 1e-6) {
-              nx = qx / d;
-              nz = qz / d;
-            } else {
-              nx = (-ez / len) * side;
-              nz = (ex / len) * side;
-            }
-            pen = r - d;
-          }
-          if (!best || pen > best.pen) best = { nx, nz, pen };
-        }
-      }
-    }
-    return best;
-  }
-
-  /**
    * Deepest wall contact for a car box (world box from carBoxes() in carShape.js) whose
    * centre moved from (pcx, pcz) to (box.cx, box.cz) this step. Each wall is a segment of
    * its centreline WALL_THICKNESS thick (boxSegment with r = half the thickness).
@@ -902,7 +841,8 @@ export class TrackPath {
    * the wall (move the box back along −n by depth to clear it), (px, pz) is the contact
    * point. A centre that crossed a wall during the step is pushed back to the side it
    * came from, so a fast car can't skip through a wall in one step.
-   * y (optional): the road height under the car, as in wallContact.
+   * y (optional): the road height under the car; walls of a section on another level
+   * (a bridge overhead or the road below it) are ignored.
    */
   wallContactBox(box, pcx, pcz, y = null) {
     const c = this.segCell, S = this.seg;
