@@ -27,6 +27,7 @@ import { Race, LEVELS as AI_LEVELS, AIDriver, Entry, racingLine, STYLES } from '
 import { FreeCam } from './freecam.js';
 import { IncidentMonitor } from './incidents.js';
 import { Director } from './director.js';
+import { stepDebris } from './debris.js';
 import { PauseMenu } from './pause.js';
 
 const SUN_DIR = [0.45, 0.8, 0.35];
@@ -410,6 +411,9 @@ async function start() {
     hud.setRace(race);
   }
 
+  /** Every car on the track, as { car, physics } (the player's first). */
+  const fleet = () => [{ car, physics }, ...(race?.ai ?? []).map((e) => ({ car: e.car, physics: e.physics }))];
+
   /** The player's starting spot: their grid slot in a race, pole when driving alone. */
   const playerGrid = () => (race ? race.playerGrid() : track.path.gridPose(0));
 
@@ -420,7 +424,6 @@ async function start() {
     car.setWing(physics.damage, crews.wingMode, physics);
     car.setDamage(physics.damage, physics, dt);
     car.setWingProps(crews.wingProps);
-    car.updateDebris(dt);
     car.setCompound(crews.carCompound ?? physics.compound);
     crews.wheelOn.forEach((on, i) => car.setWheelVisible(i, on));
     for (const e of race?.ai ?? []) {
@@ -437,7 +440,6 @@ async function start() {
       c.update(p, dt, out?.lift ?? 0);
       c.setWing(p.damage, 'car', p);
       c.setDamage(p.damage, p, dt);
-      c.updateDebris(dt);
       c.setCompound(out?.compound ?? p.compound);
       for (let i = 0; i < 4; i++) c.setWheelVisible(i, out ? out.wheelOn[i] : true);
     }
@@ -792,6 +794,8 @@ async function start() {
         }
         // the AI cars, then car-to-car contact (after the timer, so a finish flash wins)
         race?.stepAI(startLights.holding, FIXED, { damage: settings.get('damage'), resets: aiResets(), takeover: driving ? watching : null, controls });
+        // debris from crashes: flying, sliding, and in the way of every car (debris.js)
+        stepDebris(fleet(), track.path, FIXED);
         wreckCheck();
         acc -= FIXED;
       }

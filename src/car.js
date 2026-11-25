@@ -51,7 +51,7 @@ export const WHEELS = [
 // Front wing: each half hinges off the centre section where it would bend in a hit.
 const FRONT_WING = { span: 0.975, hinge: 0.3, pivotY: 0.1, pivotZ: 2.62, centreY: 0.13 };
 const ENDPLATE_OFF = 0.4; // wing damage at which that side's endplate is knocked off
-const MAX_DEBRIS = 24;
+const MAX_DEBRIS = 24; // pieces of debris per car at most (the oldest go first)
 const REAR_WING_PIVOT = [0, 0.95, -2.45]; // where the rear wing sits on its swan necks
 const FLOOR_EDGE_OFF = 0.6; // floor damage at which the floor-edge wing tears off
 const SMOKE = { count: 36, life: 1.6, at: [0, 0.5, -2.35] }; // engine smoke puffs (car frame emitter)
@@ -651,51 +651,29 @@ export class Car {
     }
   }
 
-  /** Throw a copy of `part` (a piece of the car that just broke off) onto the track. */
+  /**
+   * Throw a copy of `part` (a piece of the car that just broke off) onto the track, as a
+   * solid piece of debris (debris.js moves it and lets the cars hit it).
+   */
   spawnDebris(part, state, sx) {
     this.group.updateMatrixWorld(true);
     const piece = part.clone();
     piece.visible = true;
     piece.traverse((o) => o.layers.enable(0)); // the part may be hidden by the LOD (setLod)
     part.matrixWorld.decompose(piece.position, piece.quaternion, piece.scale);
-    this.debris.add(piece);
     // carried along by the car's speed, thrown outwards and up, tumbling
     const yaw = state.yaw;
     const lx = Math.cos(yaw) * sx, lz = -Math.sin(yaw) * sx; // the car's left (sx = 1) or right
     const out = 2 + Math.random() * 3;
-    this.pieces.push({
-      obj: piece,
-      v: new THREE.Vector3(state.vel.x * 0.75 + lx * out, 2 + Math.random() * 3, state.vel.z * 0.75 + lz * out),
-      spin: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(14),
-      ground: (state.height ?? 0) + 0.02,
-      rest: false,
-    });
+    const p = makePiece(
+      piece,
+      new THREE.Vector3(state.vel.x * 0.75 + lx * out, 2 + Math.random() * 3, state.vel.z * 0.75 + lz * out),
+      new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(14),
+      state,
+    );
+    this.debris.add(p.obj);
+    this.pieces.push(p);
     while (this.pieces.length > MAX_DEBRIS) this.debris.remove(this.pieces.shift().obj);
-  }
-
-  /** Fly and bounce the debris until it settles on the road. */
-  updateDebris(dt) {
-    const e = new THREE.Euler(), q = new THREE.Quaternion();
-    for (const p of this.pieces) {
-      if (p.rest) continue;
-      const o = p.obj;
-      p.v.y -= 9.81 * dt;
-      o.position.addScaledVector(p.v, dt);
-      o.quaternion.premultiply(q.setFromEuler(e.set(p.spin.x * dt, p.spin.y * dt, p.spin.z * dt)));
-      if (o.position.y < p.ground) {
-        o.position.y = p.ground;
-        p.v.y = Math.abs(p.v.y) * 0.25;
-        p.v.x *= 0.55;
-        p.v.z *= 0.55;
-        p.spin.multiplyScalar(0.45);
-        if (p.v.lengthSq() < 0.3) {
-          // flat on the road: keep its heading, lay it down
-          e.setFromQuaternion(o.quaternion, 'YXZ');
-          o.quaternion.setFromEuler(e.set(0, e.y, 0, 'YXZ'));
-          p.rest = true;
-        }
-      }
-    }
   }
 
   /** Clear the track of debris (reset, new track) and drop the pit crew's old wing. */
@@ -1069,4 +1047,37 @@ function mergeGeometries(geos) {
   out.setAttribute('uv', new THREE.Float32BufferAttribute(data.uv, 2));
   out.setIndex(index);
   return out;
+}
+
+const _box = new THREE.Box3(), _size = new THREE.Vector3(), _centre = new THREE.Vector3();
+const _yaw = new THREE.Quaternion(), _up = new THREE.Vector3(0, 1, 0);
+
+/**
+ * A piece of debris for car.pieces (moved and hit in debris.js): `part` (a world-space copy,
+ * posed where it broke off) is wrapped in a holder at its centre, so it tumbles about its
+ * middle and its collision box is centred on it. v, spin: Vector3s (m/s, rad/s); owner: the
+ * physics of the car it came off. Its size is measured in the car's frame, as it sat on the
+ * car (that's how it lies once it comes to rest): hx along the car, hy across, hz up; yaw0 is
+ * the car's heading, which the box turns with as well as the holder's own.
+ */
+function makePiece(part, v, spin, owner) {
+  const yaw = owner.yaw ?? 0;
+  // measure it turned back to the car's heading 0, about its own origin
+  part.quaternion.premultiply(_yaw.setFromAxisAngle(_up, -yaw));
+  part.updateMatrixWorld(true);
+  _box.setFromObject(part);
+  _box.getCenter(_centre);
+  _box.getSize(_size);
+  part.quaternion.premultiply(_yaw.setFromAxisAngle(_up, yaw));
+  // its centre, turned back with it
+  _centre.sub(part.position).applyAxisAngle(_up, yaw).add(part.position);
+  const obj = new THREE.Group();
+  obj.position.copy(_centre);
+  part.position.sub(_centre);
+  obj.add(part);
+  return {
+    obj, v, spin, owner, yaw0: yaw,
+    hx: Math.max(0.06, _size.z / 2), hy: Math.max(0.06, _size.x / 2), hz: Math.max(0.03, _size.y / 2),
+    age: 0, rest: false, hint: -1, hits: new Map(),
+  };
 }

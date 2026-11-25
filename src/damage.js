@@ -12,7 +12,9 @@
 // The monocoque and halo are the survival cell: they never break.
 //
 // Damage comes from wall impacts (physics.js, impact()), from other cars (ai.js,
-// hitPart(): only the parts whose collision boxes touched) and from landings (landing()). Each part is described by its outermost
+// hitPart(): only the parts whose collision boxes touched), from running into debris
+// lying on the track (debris.js, hitPart() on the part that reached it first) and from
+// landings (landing()). Each part is described by its outermost
 // points on the car. The wall touches the car at whichever point sticks out furthest
 // towards it, and the hit then crushes into the car to a depth that grows with the
 // speed into the wall: every part with a point inside that depth is hit, harder the
