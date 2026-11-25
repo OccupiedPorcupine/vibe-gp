@@ -24,7 +24,7 @@
 // costs downforce on both axles; crushed sidepods add drag and overheat the engine; a
 // hurt power unit / gearbox loses power; bent suspension knocks a wheel out of line
 // (toe-out pulls the car, camber costs grip); damaged tyres grip less and drag.
-import { CAR_DIMS } from './car.js';
+import { CAR_DIMS, WHEELS } from './car.js';
 import { KERB_WIDTH, WALL_THICKNESS, PIT } from './trackPath.js';
 import { SURFACES, TYRE, COMPOUNDS, tyreForce, tempGrip, wearGrip, peakForce, rollingCoef } from './tyres.js';
 import { CarDamage, DAMAGE } from './damage.js';
@@ -72,13 +72,6 @@ export const PARAMS = {
 };
 
 const D = CAR_DIMS;
-// wheel layout in the car frame: x forward from the CoG, y to the left
-const WHEELS = [
-  { x: D.frontAxle, y: D.track, r: D.frontRadius, front: true },
-  { x: D.frontAxle, y: -D.track, r: D.frontRadius, front: true },
-  { x: D.rearAxle, y: D.track, r: D.rearRadius, front: false },
-  { x: D.rearAxle, y: -D.track, r: D.rearRadius, front: false },
-];
 const A_FRONT = D.frontAxle; // CoG → front axle
 const B_REAR = -D.rearAxle; // CoG → rear axle
 const L = A_FRONT + B_REAR;

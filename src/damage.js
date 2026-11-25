@@ -64,7 +64,7 @@ export const DAMAGE = {
  */
 const D = DAMAGE;
 const sideY = (s) => (s ? -1 : 1);
-const PARTS = [
+export const PARTS = [
   // front wing: endplate tip, the endplate's outer face and the mainplane's leading edge
   ...[0, 1].map((s) => ({ part: 'wing', i: s, k: 1.4, pts: [[2.98, 0.98], [2.3, 0.98], [2.98, 0.35]].map(([x, y]) => [x, y * sideY(s)]) })),
   // rear wing: endplates and the trailing edge
