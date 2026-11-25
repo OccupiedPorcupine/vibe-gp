@@ -26,7 +26,7 @@
 // Barriers are explicit polylines (this.walls): the two main walls, opened where the
 // pit lane merges, pulled in to form the pit wall where the lane runs beside the
 // track, plus the pit lane's outer wall and short closing walls at the merges. The
-// car collides against their segments (wallContact), so any layout works.
+// car's collision boxes collide with their segments (wallContactBox), so any layout works.
 import { CatmullRomCurve3, Vector3 } from 'three/webgpu';
 import { RUNOFF } from './tracks/runoff.js';
 import { speedProfile, findCorners, wantedWalls, clearWidened, autoSurfaces } from './runoffPlan.js';
@@ -834,17 +834,24 @@ export class TrackPath {
   }
 
   /**
-   * Deepest wall contact for a circle of radius r that moved from (px, pz) to (x, z).
-   * Returns { nx, nz, pen } (unit normal from the wall towards the side the circle
-   * came from, and how far to push it out) or null. Moving through a wall counts.
-   * y (optional): the road height under the circle; walls of a section on another level
+   * Deepest wall contact for a car box (world box from carBoxes() in carShape.js) whose
+   * centre moved from (pcx, pcz) to (box.cx, box.cz) this step. Each wall is a segment of
+   * its centreline WALL_THICKNESS thick (boxSegment with r = half the thickness).
+   * Returns { depth, nx, nz, px, pz } or null: the unit normal points from the box into
+   * the wall (move the box back along −n by depth to clear it), (px, pz) is the contact
+   * point. A centre that crossed a wall during the step is pushed back to the side it
+   * came from, so a fast car can't skip through a wall in one step.
+   * y (optional): the road height under the car; walls of a section on another level
    * (a bridge overhead or the road below it) are ignored.
    */
-  wallContact(x, z, px, pz, r, y = null) {
+  wallContactBox(box, pcx, pcz, y = null) {
     const c = this.segCell, S = this.seg;
+    const r = WALL_THICKNESS / 2;
+    const reach = Math.hypot(box.hx, box.hy) + r; // box's bounding circle + half the wall
+    const x = box.cx, z = box.cz;
     const tick = ++this.segTick;
-    const x0 = Math.floor((Math.min(x, px) - r) / c), x1 = Math.floor((Math.max(x, px) + r) / c);
-    const z0 = Math.floor((Math.min(z, pz) - r) / c), z1 = Math.floor((Math.max(z, pz) + r) / c);
+    const x0 = Math.floor((Math.min(x, pcx) - reach) / c), x1 = Math.floor((Math.max(x, pcx) + reach) / c);
+    const z0 = Math.floor((Math.min(z, pcz) - reach) / c), z1 = Math.floor((Math.max(z, pcz) + reach) / c);
     let best = null;
     for (let gx = x0; gx <= x1; gx++) {
       for (let gz = z0; gz <= z1; gz++) {
@@ -854,40 +861,27 @@ export class TrackPath {
           if (this.segStamp[s] === tick) continue;
           this.segStamp[s] = tick;
           if (y !== null && Math.abs(S.ay[s] - y) > GRADE_SEP) continue;
-          const ax = S.ax[s], az = S.az[s];
-          const ex = S.bx[s] - ax, ez = S.bz[s] - az;
+          const ax = S.ax[s], az = S.az[s], bx = S.bx[s], bz = S.bz[s];
+          const ex = bx - ax, ez = bz - az;
           const len2 = ex * ex + ez * ez;
           if (len2 < 1e-9) continue;
-          const len = Math.sqrt(len2);
-          const d1 = ex * (pz - az) - ez * (px - ax); // signed distances × len, + = left of a→b
+          // did the centre cross the segment this step? Then it belongs on the side it came from
+          const d1 = ex * (pcz - az) - ez * (pcx - ax); // signed distances × len, + = left of a→b
           const d2 = ex * (z - az) - ez * (x - ax);
-          const side = d1 >= 0 ? 1 : -1;
-          let nx, nz, pen = -1;
+          let side = 0;
           if (d1 * d2 < 0) {
             const t = d1 / (d1 - d2);
-            const ix = px + (x - px) * t, iz = pz + (z - pz) * t;
-            const u = ((ix - ax) * ex + (iz - az) * ez) / len2;
-            if (u >= 0 && u <= 1) {
-              nx = (-ez / len) * side;
-              nz = (ex / len) * side;
-              pen = Math.abs(d2) / len + r;
-            }
+            const u = ((pcx + (x - pcx) * t - ax) * ex + (pcz + (z - pcz) * t - az) * ez) / len2;
+            if (u >= 0 && u <= 1) side = d1 > 0 ? 1 : -1;
           }
-          if (pen < 0) {
+          if (!side) {
+            // quick reject: the segment is beyond the box's bounding circle
             const u = Math.max(0, Math.min(1, ((x - ax) * ex + (z - az) * ez) / len2));
-            const qx = x - (ax + ex * u), qz = z - (az + ez * u);
-            const d = Math.hypot(qx, qz);
-            if (d >= r) continue;
-            if (d > 1e-6) {
-              nx = qx / d;
-              nz = qz / d;
-            } else {
-              nx = (-ez / len) * side;
-              nz = (ex / len) * side;
-            }
-            pen = r - d;
+            const qx = x - ax - ex * u, qz = z - az - ez * u;
+            if (qx * qx + qz * qz >= reach * reach) continue;
           }
-          if (!best || pen > best.pen) best = { nx, nz, pen };
+          const hit = boxSegment(box, ax, az, bx, bz, r, side);
+          if (hit && (!best || hit.depth > best.depth)) best = hit;
         }
       }
     }
@@ -1279,6 +1273,95 @@ export function flagRuns(flags, wrap = true) {
     }
   }
   return out;
+}
+
+/**
+ * A car box against a wall segment a→b, in plan view.
+ * box: world box { cx, cz, fx, fz, hx, hy } as carBoxes() in carShape.js makes it: centre,
+ * unit forward axis, left axis (fz, −fx), half length and half width.
+ * r: the segment's half thickness (the wall is a capsule round it; 0 = a bare line).
+ * side: which side of the segment's line the box belongs on (+1 = left of a→b, −1 = right,
+ * 0 = the side its centre is on). A box whose centre is on the other side went through
+ * the wall, and is pushed straight back across it.
+ * Returns { depth, nx, nz, px, pz } or null when they don't touch: (nx, nz) is the unit
+ * normal from the box into the wall (move the box by −n·depth to clear it) and (px, pz)
+ * the contact point.
+ */
+export function boxSegment(box, ax, az, bx, bz, r = 0, side = 0) {
+  const { cx, cz, fx, fz, hx, hy } = box;
+  const lx = fz, lz = -fx;
+  const ex = bx - ax, ez = bz - az;
+  const len = Math.hypot(ex, ez);
+  // the segment's left normal m, and the box centre's signed distance from its line
+  const mx = len > 1e-9 ? -ez / len : 0, mz = len > 1e-9 ? ex / len : 0;
+  const d0 = (cx - ax) * mx + (cz - az) * mz;
+  const sd = side || (d0 >= 0 ? 1 : -1);
+  const world = (depth, nu, nv, pu, pv) => ({
+    depth,
+    nx: fx * nu + lx * nv,
+    nz: fz * nu + lz * nv,
+    px: cx + fx * pu + lx * pv,
+    pz: cz + fz * pu + lz * pv,
+  });
+  // the segment in the box frame: u forward, v left, box = [−hx, hx] × [−hy, hy]
+  const au = (ax - cx) * fx + (az - cz) * fz, av = (ax - cx) * lx + (az - cz) * lz;
+  const bu = (bx - cx) * fx + (bz - cz) * fz, bv = (bx - cx) * lx + (bz - cz) * lz;
+  const mu = mx * fx + mz * fz, mv = mx * lx + mz * lz; // m in the box frame
+  const radM = hx * Math.abs(mu) + hy * Math.abs(mv); // the box's half extent along m
+  if (len > 1e-9 && d0 * sd < 0) {
+    // the centre went through: back across the line, clear of the wall's far face
+    const t = Math.max(0, Math.min(1, ((cx - ax) * ex + (cz - az) * ez) / (len * len)));
+    return world(r + radM - d0 * sd, -sd * mu, -sd * mv, au + (bu - au) * t, av + (bv - av) * t);
+  }
+  // clip the segment to the box (Liang–Barsky): the part of the wall line inside it
+  let t0 = 0, t1 = 1;
+  const eu = bu - au, ev = bv - av;
+  for (const [p, d, h] of [[au, eu, hx], [av, ev, hy]]) {
+    if (Math.abs(d) < 1e-12) {
+      if (Math.abs(p) > h) t0 = 2; // parallel to this slab and outside it
+    } else {
+      const ta = (-h - p) / d, tb = (h - p) / d;
+      t0 = Math.max(t0, Math.min(ta, tb));
+      t1 = Math.min(t1, Math.max(ta, tb));
+    }
+  }
+  if (t0 > t1) {
+    // apart: the closest points of the box and the segment, from each end and each corner
+    let best = Infinity, bpu = 0, bpv = 0, spu = 0, spv = 0;
+    const tryPair = (pu, pv, qu, qv) => {
+      const d = (qu - pu) ** 2 + (qv - pv) ** 2;
+      if (d < best) [best, bpu, bpv, spu, spv] = [d, pu, pv, qu, qv];
+    };
+    for (const [qu, qv] of [[au, av], [bu, bv]]) tryPair(clamp(qu, -hx, hx), clamp(qv, -hy, hy), qu, qv);
+    const e2 = eu * eu + ev * ev;
+    for (const su of [-hx, hx]) {
+      for (const sv of [-hy, hy]) {
+        const t = e2 > 1e-18 ? clamp(((su - au) * eu + (sv - av) * ev) / e2, 0, 1) : 0;
+        tryPair(su, sv, au + eu * t, av + ev * t);
+      }
+    }
+    const dist = Math.sqrt(best);
+    if (dist >= r) return null;
+    if (dist > 1e-9) return world(r - dist, (spu - bpu) / dist, (spv - bpv) / dist, bpu, bpv);
+  }
+  // overlapping: the shallowest way out over the separating axes (box forward, box left
+  // and the wall normal, which only pushes the box towards its own side)
+  let depth = Infinity, nu = 0, nv = 0;
+  const axis = (ku, kv, rad, sides) => {
+    const pa = au * ku + av * kv, pb = bu * ku + bv * kv;
+    const lo = Math.min(pa, pb) - r, hi = Math.max(pa, pb) + r;
+    if (sides >= 0 && hi + rad < depth) [depth, nu, nv] = [hi + rad, -ku, -kv]; // box out to +k
+    if (sides <= 0 && rad - lo < depth) [depth, nu, nv] = [rad - lo, ku, kv]; // box out to −k
+  };
+  axis(1, 0, hx, 0);
+  axis(0, 1, hy, 0);
+  if (len > 1e-9) axis(mu, mv, radM, sd);
+  const tm = t0 <= t1 ? (t0 + t1) / 2 : 0; // contact: middle of the wall inside the box
+  return world(depth, nu, nv, au + eu * tm, av + ev * tm);
+}
+
+function clamp(x, a, b) {
+  return Math.max(a, Math.min(b, x));
 }
 
 function segmentsCross(ax, az, bx, bz, cx, cz, dx, dz) {
