@@ -853,20 +853,7 @@ export class AIDriver {
 
   /** Put a stuck car back on the racing line, a little behind where it was, out of the way. */
   respawn(field) {
-    const car = this.entry.physics;
-    const P = car.track;
-    let s = car.trackS - 10;
-    for (let tries = 0; tries < 10; tries++) {
-      const clear = field.every((o) => o === this.entry || Math.abs(lapDelta(o.physics.trackS, s, P.length)) > 25);
-      if (clear) break;
-      s -= 20;
-    }
-    const pose = P.poseAt(s, this.line.latAt(s));
-    this.entry.respawned(s); // before the reset, which forgets where the car was
-    const keep = { compound: car.compound, wear: car.wheels.map((w) => w.wear) };
-    car.reset(pose);
-    car.compound = keep.compound; // and the same tyres, as worn as they were
-    car.wheels.forEach((w, i) => (w.wear = keep.wear[i]));
+    putBack(this.entry.physics, this.line, field, this.entry);
     this.offset = this.offsetTarget = 0;
     this.mistake = null; // or it's put back inside the same mistake and repeats it
     this.pit = null; // a stop under way is off; the next lap decides again
@@ -1174,6 +1161,29 @@ function impactSound(car, nx, nz, speed) {
     car.impact = speed;
     car.impactSide = nx * Math.cos(car.yaw) - nz * Math.sin(car.yaw);
   }
+}
+
+/**
+ * Put a car back on the track, repaired: on the racing line `line` a little behind where it
+ * is, clear of the other cars in `field` (race entries), on the same tyres as worn as they
+ * were. entry: its race entry, if it's in a race (keeps its progress along the lap right).
+ * Returns the distance along the lap it was put at.
+ */
+export function putBack(car, line, field = [], entry = null) {
+  const P = car.track;
+  let s = car.trackS - 10;
+  for (let tries = 0; tries < 10; tries++) {
+    const clear = field.every((o) => o === entry || Math.abs(lapDelta(o.physics.trackS, s, P.length)) > 25);
+    if (clear) break;
+    s -= 20;
+  }
+  const pose = P.poseAt(s, line ? line.latAt(s) : 0);
+  entry?.respawned(s); // before the reset, which forgets where the car was
+  const keep = { compound: car.compound, wear: car.wheels.map((w) => w.wear) };
+  car.reset(pose);
+  car.compound = keep.compound; // and the same tyres, as worn as they were
+  car.wheels.forEach((w, i) => (w.wear = keep.wear[i]));
+  return s;
 }
 
 /** One car in the race: the player's or an AI's. */
