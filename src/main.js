@@ -23,7 +23,7 @@ import { PitCrews } from './pitCrew.js';
 import { COMPOUND_LIST } from './tyres.js';
 import { DAMAGE } from './damage.js';
 import { Sound } from './sound.js';
-import { Race, LEVELS as AI_LEVELS, AIDriver, Entry, racingLine, STYLES, putBack } from './ai.js';
+import { Race, LEVELS as AI_LEVELS, AIDriver, Entry, racingLine, STYLES } from './ai.js';
 import { FreeCam } from './freecam.js';
 import { IncidentMonitor } from './incidents.js';
 import { Director } from './director.js';
@@ -198,6 +198,8 @@ async function start() {
   let autopilot = null;
   let soloLine = null;
   function autopilotStep(dt) {
+    // wrecked: it waits for you where it is, brakes on (parked: the brake doesn't select reverse)
+    if (physics.damage.undrivable) return { steer: 0, throttle: 0, brake: 1, parked: true };
     if (!autopilot || autopilot.race !== race || autopilot.physics !== physics || autopilot.path !== track.path) {
       if (!race && soloLine?.path !== track.path) soloLine = { path: track.path, line: racingLine(track.path) };
       const entry = race?.player ?? new Entry({ team: car.team, physics, isPlayer: true });
@@ -209,40 +211,26 @@ async function start() {
     return autopilot.driver.drive(autopilot.field, race ? race.sinceGreen : startLights.holding ? 0 : 99, dt);
   }
 
-  // ---- a wrecked car: pitched or rolled past 60 degrees in the air (physics.js). The car
-  // driven by hand (yours, or the AI car you've taken the wheel of with G) flashes WRECKED,
-  // and after a moment it's put back on the racing line, repaired, as the AI cars are. Your
-  // car driving itself (free cam, watching, director mode) is its AI driver's to put back.
-  // No resets is about the AI cars: you're always put back (R still restarts the race) ----
-  const WRECK_PAUSE = 2; // s of WRECKED before the car is put back
-  let wreck = null; // { physics, at }: the hand-driven car that was wrecked, and when
+  // ---- a wrecked car (CarDamage.undrivable: broken suspension or a dead engine). The car
+  // driven by hand (yours, or the AI car you've taken the wheel of with G) is left where it
+  // is: WRECKED goes up as it happens, saying what you can do, and stays (giving way to other
+  // messages for a moment) until the car is repaired. R restarts the race in your own car,
+  // and puts the car you've taken over back on the track. Your car driving itself (free cam,
+  // watching, director mode) waits where it is too (autopilotStep). With damage off nothing
+  // is ever wrecked ----
+  let wreck = null; // the hand-driven car's physics while it's wrecked
+  const wreckFlash = () => ({ text: driving ? 'WRECKED · R TO PUT IT BACK' : TOUCH ? 'WRECKED · MENU TO RESTART' : 'WRECKED · R TO RESTART', warn: true, wreck: true });
   function wreckCheck() {
-    const e = driving ? watching : null;
-    const p = e ? e.physics : freecam.active || watching || director.on ? null : physics;
-    if (!p?.wrecked) {
+    const p = driving ? watching.physics : freecam.active || watching || director.on ? null : physics;
+    if (!p?.damage.undrivable) {
+      if (wreck && timer.flash?.wreck) timer.flash = null; // repaired, or not yours to drive any more
       wreck = null;
       return;
     }
-    if (wreck?.physics !== p) {
-      wreck = { physics: p, at: timer.time };
-      timer.flash = { text: 'WRECKED', until: timer.time + WRECK_PAUSE, warn: true };
-      return;
-    }
-    if (timer.time - wreck.at < WRECK_PAUSE) {
-      // it stays up over the parts breaking as it lands: they're about to be repaired anyway
-      if (timer.flash?.text !== 'WRECKED') timer.flash = { text: 'WRECKED', until: wreck.at + WRECK_PAUSE, warn: true };
-      return;
-    }
-    wreck = null;
-    if (e) e.driver.respawn(race.entries);
-    else {
-      if (!race && soloLine?.path !== track.path) soloLine = { path: track.path, line: racingLine(track.path) };
-      putBack(physics, race?.line ?? soloLine.line, race?.entries ?? [], race?.player ?? null);
-      applySettings(); // reset() puts the aids back to their defaults
-      pitStop.reset();
-    }
-    rig.initialised = false; // the camera starts again behind the car where it is now
-    timer.flash = { text: 'BACK ON TRACK', until: timer.time + 1.5 };
+    // as it happens (over the part it broke), and again whenever the screen is clear
+    if (wreck !== p || !(timer.time < timer.flash?.until)) timer.flash = { ...wreckFlash(), until: timer.time + 3 };
+    else if (timer.flash.wreck) timer.flash.until = timer.time + 3;
+    wreck = p;
   }
 
   // ---- watching another car: in free cam, click it in the timing tower. The camera views
@@ -486,7 +474,7 @@ async function start() {
     const rules = [
       () => crossed('wing', DAMAGE.wingBreak) && (dmg.broken(0) && dmg.broken(1) ? 'FRONT WING GONE' : `${SIDE[crossed('wing', DAMAGE.wingBreak).side]} FRONT WING BROKEN`),
       () => crossed('rearWing', DAMAGE.rearWingBreak) && 'REAR WING GONE',
-      () => crossed('suspension', 0.6) && `${CORNER[crossed('suspension', 0.6).side]} SUSPENSION BROKEN`,
+      () => crossed('suspension', DAMAGE.suspensionBroken) && `${CORNER[crossed('suspension', DAMAGE.suspensionBroken).side]} SUSPENSION BROKEN`,
       () => crossed('engine', 0.5) && 'ENGINE DAMAGE · LOSING POWER',
       () => crossed('tyre', 0.5) && `${CORNER[crossed('tyre', 0.5).side]} TYRE DAMAGED`,
       () => crossed('mirror', 1) && `${SIDE[crossed('mirror', 1).side]} MIRROR GONE`,

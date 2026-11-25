@@ -133,7 +133,7 @@ The HUD shows your position and laps, and a timing tower with gaps to the leader
 
 ## Damage
 
-Hitting a wall can damage every part of the car except the survival cell (monocoque and halo) (`src/damage.js`). Press **B** to switch damage off and on; switching it off also repairs the car.
+Hitting a wall can damage every part of the car except the survival cell (monocoque and halo) (`src/damage.js`). Switch damage off and on in Settings; switching it off also repairs the car.
 
 Each part is described by its outermost points. The wall touches whichever point sticks out furthest towards it, and the hit then crushes into the car further the faster it was going into the wall. Every part within that depth is damaged, the parts nearest the first contact most. So a head-on hit breaks the front wing, and a harder one also reaches the front wheels. A side swipe catches the wing endplate, both wheels and the floor edge on that side; only a heavy one crushes the sidepod or takes off a mirror. Reversing into a wall breaks the rear wing, then the gearbox. Very hard hits anywhere also shake the engine. Gentle scrapes do no damage.
 
@@ -149,6 +149,8 @@ Each part is described by its outermost points. The wall touches whichever point
 | Engine / gearbox | Loses up to half its power | Smoke, from grey wisps to thick black |
 
 The damage diagram beside the dash shows the whole car from above, each part coloured from green to red, dashed where it has broken off. A warning flashes for the worst thing each hit breaks. Broken-off parts fly away and stay on the track until you reset.
+
+Broken suspension (any corner) or a dead engine wrecks the car: it can't race on, and a pit stop can't fix it. Only damage wrecks a car. Pitch and roll in the air stop at 60° (no full flips), and a car that lands from there is wrecked only if the landing breaks something. Your car isn't put back for you: it stays where it is, and WRECKED stays up, saying what to do. **R** restarts the race in your own car; in a car you've taken the wheel of (G), R puts it back on the track. The notice clears once the car is repaired (a restart, or switching damage off). AI cars that are wrecked are put back, or retire with *No resets* (see AI opponents).
 
 In the pits, every stop fits new tyres, which clears tyre damage on all four corners. To get a new front wing, press **F** (or click *New front wing* on the HUD) any time before the stop. While it's on, two wing crew wait in the garage holding the spare. In the box, two crew pull the old wing off and carry it into the garage, and two more fit the new one while the tyres are changed. That takes the stop to about 7.5 s, against about 2.2 s for tyres only. The choice is reset after the stop. Nothing else can be fixed in a pit stop: reset (**R**) for a fresh car. `track-check` turns damage off for its autopilot lap.
 
