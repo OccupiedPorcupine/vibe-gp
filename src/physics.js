@@ -131,6 +131,8 @@ export const AIR = {
   bounceSpeed: 4, // m/s into the road: a landing harder than this rebounds ...
   bounce: 0.2, // ... at this share of the speed
   scrape: 0.4, // friction of the floor or a wing tip sliding on the road (the tyres roll)
+  landWindow: 0.03, // s: a tyre's hits this close together are one landing for its damage (the
+  //                   suspension and tyre spread a slap over about this long)
   travel: 0.08, // m: in a hard landing (faster than 1 m/s), a tyre this close to the road takes
   //               its share too (the suspension's travel), so a near-level landing lands level
   settleGap: 0.02, // m: back on the tyres with each axle this close to the road ...
@@ -181,6 +183,8 @@ export class CarPhysics {
     this.launched = false; // launch() since the last step
     this.landHit = null; // the hardest ground hit since leaving the road: { v, pitchRel, rollRel }
     this.firstHit = null; // the first one (the end or side that came down first)
+    this.landPush = [0, 0, 0, 0]; // each tyre's push from the road over the last landWindow (N·s)
+    this.landDone = [0, 0, 0, 0]; // ... and the share of it its damage has been charged for
     this.height = pose.y ?? 0; // world height of the road under the car
     this.gradeF = 0; // slope along the car's heading (+ = uphill)
     this.gradeL = 0; // slope to the car's left (+ = left side higher)
@@ -391,6 +395,8 @@ export class CarPhysics {
     this.air = air + 1e-6;
     this.contacts = 0;
     this.landHit = this.firstHit = null;
+    this.landPush.fill(0);
+    this.landDone.fill(0);
     this.launched = true;
     this.pitch -= Math.atan(this.gradeF);
     this.roll += Math.atan(this.gradeL);
@@ -455,13 +461,23 @@ export class CarPhysics {
     }
     this.contacts = touching.length;
     for (const w of this.wheels) w.load = 0;
+    if (!quiet) {
+      // each tyre's push over the last landWindow, and what its damage has covered, fading
+      const fade = Math.exp(-h / A.landWindow);
+      for (let c = 0; c < 4; c++) {
+        this.landPush[c] *= fade;
+        this.landDone[c] *= fade;
+      }
+    }
     if (!touching.length) return;
 
     // impulses: each point stops going into the road (or rebounds, if it hit hard)
     // (sequential impulses: each point's total push may be taken back by later passes, as
     // long as it stays a push, so several points share it instead of one overshooting)
+    // (alternating the order each pass, so no point takes more for coming first)
     for (let pass = 0; pass < 8; pass++) {
-      for (const c of touching) {
+      for (let k = 0; k < touching.length; k++) {
+        const c = touching[pass % 2 ? touching.length - 1 - k : k];
         const g = c.g;
         const target = c.vin > A.bounceSpeed ? A.bounce * c.vin : 0;
         const ax = g.x * cp, ay = g.y * cr;
@@ -491,8 +507,26 @@ export class CarPhysics {
           this.vel.z -= (this.vel.z / v) * dv;
         }
       }
-      if (this.damageOn) this.damage.landing(g, c.vin, tilt);
+      // a tyre: how hard its suspension was hit, the push it took as the speed of a quarter of
+      // the car landing on it (a flat landing: the speed it came down at; a nose slapping down
+      // as the car pivots on its rear wheels: less than the nose's own speed, since only the
+      // car's turn about the rear wheels is stopped), less the rebound's share. The tail or
+      // a wing tip breaks from the speed it hits the road at.
+      if (g.wheel !== null) this.landPush[g.wheel] += c.J / (c.vin > A.bounceSpeed ? 1 + A.bounce : 1);
+      else if (this.damageOn) this.damage.landing(g, c.vin, tilt);
       if (!worst || c.vin > worst.vin) worst = c;
+    }
+    // each tyre's hit: its push over the window (the anti-roll bars share it with the other
+    // tyre on its axle), as the speed of a quarter of the car; damage for what it adds to the
+    // part already charged for (in steps big enough to count)
+    if (this.damageOn) {
+      const push = this.landPush, done = this.landDone, q = m / 4;
+      for (let c = 0; c < 4; c++) {
+        const hit = ((1 - DAMAGE.landShare) * push[c] + DAMAGE.landShare * push[c ^ 1]) / q;
+        if (hit - done[c] / q < 0.15) continue;
+        this.damage.landing(GROUND[c], hit, tilt, done[c] / q);
+        done[c] = hit * q;
+      }
     }
     this.air += lift;
     if (worst.vin > (this.landHit?.v ?? 0)) this.landHit = { v: worst.vin, pitchRel: pRel, rollRel: rRel };
