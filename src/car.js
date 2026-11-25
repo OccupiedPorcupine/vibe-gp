@@ -201,9 +201,13 @@ export class Car {
     this.ai = ai;
     this.common = commonMaterials();
     this.shape = { ...DEFAULT_SHAPE, ...(team.shape ?? {}) };
-    this.group = new THREE.Group(); // world transform (position + yaw)
+    this.group = new THREE.Group(); // world transform (position + yaw, on the road's slope)
+    // the whole car's rotation in the air, wheels and all, about its centre of mass (setTilt)
+    this.tilt = new THREE.Group();
+    this.group.add(this.tilt);
+    this.tiltPitch = this.tiltRoll = 0;
     this.body = new THREE.Group(); // sprung mass (pitch/roll)
-    this.group.add(this.body);
+    this.tilt.add(this.body);
     // world-space things that belong to this car but aren't on it: broken-off wing parts
     // lying on the track, and the wings the pit crew is carrying (add to the scene too)
     this.debris = new THREE.Group();
@@ -585,7 +589,7 @@ export class Car {
         this.smokeAcc -= 1;
         const p = this.smoke[this.smokeNext];
         this.smokeNext = (this.smokeNext + 1) % this.smoke.length;
-        this.group.localToWorld(at.set(...SMOKE.at));
+        this.tilt.localToWorld(at.set(...SMOKE.at));
         p.sprite.position.copy(at);
         // left behind by the car, rising and spreading
         p.v.set(state.vel.x * 0.15 + (Math.random() - 0.5), 1 + Math.random() * 0.8, state.vel.z * 0.15 + (Math.random() - 0.5));
@@ -881,7 +885,7 @@ export class Car {
     for (const c of corners) {
       const steer = new THREE.Group();
       steer.position.set(c.x, c.r, c.z);
-      this.group.add(steer); // unsprung: wheels don't pitch/roll with the body
+      this.tilt.add(steer); // unsprung: wheels don't pitch/roll with the body (but do in the air)
       const spin = new THREE.Group();
       steer.add(spin);
       const tyre = new THREE.Mesh(tyreGeometry(c.r, c.w, 0.63, 96), c.front ? tyreMats.front : tyreMats.rear);
@@ -979,8 +983,9 @@ export class Car {
    * jacks during a pit stop.
    */
   update(state, dt, lift = 0) {
-    // ride the road: its height, and the slope along and across the car's heading
-    this.group.position.set(state.position.x, (state.height ?? 0) + lift, state.position.z);
+    // ride the road: its height (plus any height in the air), and the slope along and across
+    // the car's heading
+    this.group.position.set(state.position.x, (state.height ?? 0) + (state.air ?? 0) + lift, state.position.z);
     this.group.rotation.set(-Math.atan(state.gradeF ?? 0), state.yaw, Math.atan(state.gradeL ?? 0), 'YXZ');
     for (const w of this.wheels) {
       // bent suspension: the wheel toes out, leans in at the top and sags a little
@@ -990,14 +995,37 @@ export class Car {
       w.spin.rotation.x += (state.speed / w.radius) * dt;
     }
     this.wheel?.steer(state.steerAngle);
-    // body pitch under accel/brake, roll in corners (smoothed in physics)
-    this.body.rotation.x = state.pitch;
-    this.body.rotation.z = state.roll;
+    // body pitch under accel/brake, roll in corners (smoothed in physics), up to the
+    // suspension's few degrees; past that (only in the air) the whole car turns, wheels too
+    const pitch = state.pitch ?? 0, roll = state.roll ?? 0;
+    const bodyPitch = Math.max(-SUSPENSION_TILT.pitch, Math.min(SUSPENSION_TILT.pitch, pitch));
+    const bodyRoll = Math.max(-SUSPENSION_TILT.roll, Math.min(SUSPENSION_TILT.roll, roll));
+    this.body.rotation.x = bodyPitch;
+    this.body.rotation.z = bodyRoll;
     this.body.position.y = state.heave;
+    this.setTilt(pitch - bodyPitch, roll - bodyRoll);
+  }
+
+  /**
+   * Turn the whole car (+pitch nose down, +roll left side up, as the body) about its
+   * centre of mass, which sits CG_HEIGHT above the group's origin on the road.
+   */
+  setTilt(pitch, roll) {
+    if (pitch === this.tiltPitch && roll === this.tiltRoll) return;
+    this.tiltPitch = pitch;
+    this.tiltRoll = roll;
+    const t = this.tilt;
+    t.rotation.set(pitch, 0, roll);
+    // keep the pivot where it is: position = pivot − R·pivot
+    t.position.set(0, CG_HEIGHT, 0).sub(PIVOT.set(0, CG_HEIGHT, 0).applyEuler(t.rotation));
   }
 }
 
 const IDENTITY = new THREE.Matrix4();
+// the body's cosmetic tilt on its suspension, as physics.js caps it (pitch, roll in rad)
+const SUSPENSION_TILT = { pitch: 0.035, roll: 0.04 };
+const CG_HEIGHT = 0.29; // m above the road: the centre of mass (PARAMS.cgHeight in physics.js)
+const PIVOT = new THREE.Vector3(); // scratch
 const LOD_NEAR = 60, LOD_MID = 150, LOD_FAR = 1200; // m from the camera (AI cars, see setLod)
 
 /** Minimal indexed geometry merge (position/normal/uv). */
