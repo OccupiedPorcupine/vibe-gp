@@ -491,7 +491,7 @@ console.log('\ncar-to-car scenarios (Suzuka start straight)');
     return { A, B, launches: CONTACTS.launches - l0, peak, air: airSteps / 120, launchedAt, pitch, roll };
   }
   const deg = (x) => `${((x * 180) / Math.PI).toFixed(0)}°`;
-  const showLaunch = (tag, r) => console.log(`    ${tag}: ${r.launches} launch${r.launches === 1 ? '' : 'es'}; A up ${r.peak.toFixed(2)} m, ${r.air.toFixed(2)} s off the road (bounces too), nose up to ${deg(r.pitch)}, roll to ${deg(r.roll)}${r.A.wrecked ? ', WRECKED' : ''} | A ${damaged(r.A)} | B ${damaged(r.B)}`);
+  const showLaunch = (tag, r) => console.log(`    ${tag}: ${r.launches} launch${r.launches === 1 ? '' : 'es'}; A up ${r.peak.toFixed(2)} m, ${r.air.toFixed(2)} s off the road (bounces too), nose up to ${deg(r.pitch)}, roll to ${deg(r.roll)}${r.A.damage.undrivable ? ', WRECKED' : ''} | A ${damaged(r.A)} | B ${damaged(r.B)}`);
   {
     const r = launchRun(15);
     showLaunch('launch, 15 m/s', r);
@@ -600,7 +600,7 @@ console.log('\nairborne (Test Oval, and a crest at Spa)');
       c.launch({ vy: 6, pitchRate: -1.5 });
       f = flight(c, { throttle: 1, brake: 0, steer: 1 });
     }
-    check(f.t > 0.4 && f.peak > 0.6 && f.pitchUp > 0.17 && !car.wrecked && f.landed !== null,
+    check(f.t > 0.4 && f.peak > 0.6 && f.pitchUp > 0.17 && f.landed !== null,
       'key L at 50 m/s: a nose-up hop that lands', `airtime ${f.tFirst.toFixed(2)} s, peak ${f.peak.toFixed(2)} m, nose up ${(f.pitchUp * 57.3).toFixed(0)}°, first touch ${f.first?.toFixed(2)} m/s, hardest ${f.landed?.toFixed(2)} m/s`);
     const yaw0 = coast.yaw;
     let load = Infinity;
@@ -667,13 +667,20 @@ console.log('\nairborne (Test Oval, and a crest at Spa)');
       `nose up ${(f.pitchUp * 57.3).toFixed(0)}°, vertical acceleration up to ${f.liftAccel.toFixed(1)} m/s² (gravity alone ${(-G).toFixed(1)}), airtime ${f.t.toFixed(2)} s`);
   }
 
-  // past the cap: pitch stops at 60° and the car is marked wrecked
+  // past the cap: pitch stops at 60°, and that marks nothing (only damage wrecks a car)
   {
     const car = rolling(0);
     car.launch({ vy: 12, pitchRate: 4 });
-    let worst = 0;
-    flight(car, undefined, 8, (c) => (worst = Math.max(worst, Math.abs(c.pitch))));
-    check(car.wrecked && worst <= 1.05 + 1e-9, 'pitch past 60°: clamped there, wrecked', `max pitch ${((worst * 180) / Math.PI).toFixed(1)}° (cap ${((1.05 * 180) / Math.PI).toFixed(1)}°)`);
+    let worst = 0, atCap = 0, marked = false;
+    flight(car, undefined, 8, (c) => {
+      worst = Math.max(worst, Math.abs(c.pitch));
+      if (!c.firstHit && Math.abs(c.pitch) >= 1.05 - 1e-9) {
+        atCap++;
+        marked ||= c.damage.undrivable || c.damage.any || 'wrecked' in c;
+      }
+    });
+    check(atCap > 0 && !marked && worst <= 1.05 + 1e-9, 'pitch past 60°: clamped there, nothing marked',
+      `max pitch ${((worst * 180) / Math.PI).toFixed(1)}° (cap ${((1.05 * 180) / Math.PI).toFixed(1)}°), ${(atCap / 120).toFixed(2)} s at the cap before touching down, ${marked ? 'marked' : 'unmarked'}`);
   }
 
   // in the air on the jacks' or the parked brake's input: it isn't frozen in mid-air
@@ -833,7 +840,7 @@ console.log('\nairborne (Test Oval, and a crest at Spa)');
     const r = land({ vy: 8 });
     const s4 = r.d.suspension;
     check(Math.abs(r.f.first - 8) < 0.5 && Math.min(...s4) > 0.3 && Math.max(...s4) - Math.min(...s4) < 0.15 && Math.min(...r.d.floor) > 0.2
-      && Math.min(...r.d.tyre) > 0.05 && r.rebound > 0.02 && r.rebound < 0.3 && !r.car.airborne && !r.car.wrecked,
+      && Math.min(...r.d.tyre) > 0.05 && r.rebound > 0.02 && r.rebound < 0.3 && !r.car.airborne,
       'hard flat landing (8 m/s): all four corners alike, the floor and tyres too, a small rebound',
       `hit ${r.f.first?.toFixed(2)} m/s; suspension ${fmt2(s4)}, floor ${fmt2(r.d.floor)}, tyres ${fmt2(r.d.tyre)}; rebound ${r.rebound.toFixed(2)} m`);
     flat4 = land({ vy: 6 }).d; // a 1.8 m drop: past what the suspension takes for free
@@ -844,7 +851,7 @@ console.log('\nairborne (Test Oval, and a crest at Spa)');
     // it comes down on its right wheels (their hit taken through two tyres, not four), then
     // falls back about them onto its left side
     check(s4[1] > flat4.suspension[1] && s4[3] > flat4.suspension[3] && s4[1] > s4[0] + 0.2 && s4[3] > s4[2] + 0.2
-      && r.car.firstHit.rollRel > 0.7 && !r.car.wrecked && !r.car.airborne,
+      && r.car.firstHit.rollRel > 0.7 && !r.car.airborne,
       'landing at 45° roll: the side it lands on takes more than in a flat landing',
       `suspension FL FR RL RR ${fmt2(s4)} (flat at the same speed ${fmt2(flat4.suspension)}), first hit ${r.car.firstHit.v.toFixed(2)} m/s at ${((r.car.firstHit.rollRel * 180) / Math.PI).toFixed(0)}° roll`);
   }
@@ -869,8 +876,10 @@ console.log('\nairborne (Test Oval, and a crest at Spa)');
       `rolled ${((r.lift * 180) / Math.PI).toFixed(1)}°, left load while the right carried it: ${r.loads.leftWhileRight.toFixed(0)} N, damage ${r.d.any ? 'yes' : 'none'}`);
   }
 
-  // past the cap in a race: reset with resets on, retired at once without
-  for (const resets of [true, false]) {
+  // wrecked in a race is damage, never attitude: a car rolled past the cap that lands with
+  // little damage races on; one with broken suspension is put back with resets on, and
+  // pulls over and retires without
+  const raceScene = (resets, setup, secs) => {
     const player = new CarPhysics(P, P.gridPose(0));
     const race = new Race(P, TEAMS[TEAMS.length - 1], player, TEAMS, { opponents: 3, laps: 3, level: 'normal', seed: 1, chaos: 0 });
     player.reset(race.playerGrid());
@@ -889,15 +898,25 @@ console.log('\nairborne (Test Oval, and a crest at Spa)');
       respawned = true;
       own(s);
     };
-    e.physics.launch({ vy: 6, rollRate: 8 });
-    let wrecked = false;
-    for (let i = 0; i < 240 && !respawned && !e.retired; i++) {
+    const r = { e, capped: false, get respawned() { return respawned; } };
+    setup(e.physics);
+    for (let i = 0; i < 120 * secs && !respawned && !e.retired; i++) {
       tick();
-      wrecked ||= e.physics.wrecked;
+      r.capped ||= Math.abs(e.physics.roll) >= 1.05 - 1e-9;
     }
-    check(wrecked && (resets ? respawned && !e.physics.wrecked && !e.physics.airborne && !e.retired : e.retired && !respawned),
-      `rolled past 60° in a race, resets ${resets ? 'on: put back on the line' : 'off: retired at once'}`,
-      `wrecked ${wrecked}, respawned ${respawned}, retired ${e.retired}`);
+    return r;
+  };
+  for (const resets of [true, false]) {
+    const on = resets ? 'on' : 'off';
+    const r = raceScene(resets, (p) => p.launch({ vy: 4, rollRate: 10 }), 4); // under the 5 s a stuck car waits
+    const d = r.e.physics.damage;
+    check(r.capped && !d.undrivable && !r.respawned && !r.e.retired,
+      `rolled past 60° in a race with little damage, resets ${on}: races on (not reset, not retired)`,
+      `capped ${r.capped}; suspension ${fmt2(d.suspension)}, engine ${d.engine.toFixed(2)}; respawned ${r.respawned}, retired ${r.e.retired}`);
+    const w = raceScene(resets, (p) => (p.damage.suspension[0] = 0.65), 15);
+    check(resets ? w.respawned && !w.e.retired && !w.e.physics.damage.undrivable : w.e.retired && !w.respawned,
+      `suspension at 0.65 in a race, resets ${on}: ${resets ? 'put back on the line, repaired' : 'pulls over and retires'}`,
+      `respawned ${w.respawned}, retired ${w.e.retired}`);
   }
 
   // a nose-down launch on an uphill (Spa, s 1500): it starts clear of the road, as downhill

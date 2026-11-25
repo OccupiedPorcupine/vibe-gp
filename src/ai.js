@@ -183,11 +183,6 @@ export function racingLine(P, { gripUse = 1.15, learned = AI_PACE[P.def?.id] } =
   return line;
 }
 
-/** Damage an AI car can't race on (no-resets mode): broken suspension or a dead engine. */
-function wrecked(d) {
-  return d.suspension.some((x) => x >= 0.6) || d.engine >= 0.95;
-}
-
 /** Signed distance from s0 to s1 along the lap, in (-L/2, L/2]. */
 function lapDelta(s1, s0, L) {
   let d = s1 - s0;
@@ -363,13 +358,6 @@ export class AIDriver {
     const P = car.track;
     const L = P.length;
     if (sinceGreen < this.reaction) return { steer: 0, throttle: 0, brake: 1 };
-    // pitched or rolled past the cap in the air (physics.js): with resets it's put back on the
-    // line, in no-resets mode it retires on the spot
-    if (car.wrecked) {
-      if (this.resets) this.respawn(field);
-      else this.entry.retire?.();
-      return { steer: 0, throttle: 0, brake: 0 };
-    }
     // in the air nothing the driver does reaches the road: off the pedals, wheel straight,
     // and no plans made or timers run (stuck, mistakes, respawns, pit stops) until it lands.
     // Then it carries on as after a spin: whatever it was in the middle of is over, and the
@@ -383,13 +371,13 @@ export class AIDriver {
       this.mistake = null;
       this.brakeNow = false;
     }
-    // a car too badly damaged to race (it can't pit): with resets it's put back on the line
-    // repaired; in no-resets mode it pulls over and retires
-    if (this.resets && wrecked(car.damage)) {
+    // wrecked, too badly damaged to race (CarDamage.undrivable: it can't pit for it): with
+    // resets it's put back on the line repaired; in no-resets mode it pulls over and retires
+    if (this.resets && car.damage.undrivable) {
       this.respawn(field);
       return { steer: 0, throttle: 0, brake: 0 };
     }
-    if (!this.resets && (this.parking || wrecked(car.damage))) return this.pullOver();
+    if (!this.resets && (this.parking || car.damage.undrivable)) return this.pullOver();
 
     this.wobbleT -= dt;
     if (this.wobbleT <= 0) {
