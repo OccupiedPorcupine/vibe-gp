@@ -16,6 +16,9 @@
 //   pitlane (optional): { points: [[x, y], ...] } open polyline of the pit lane's
 //           centreline in the same map coordinates, in the driving direction, from
 //           the point where it leaves the track to the point where it rejoins.
+//           hug: true pulls a lane that real data puts well away from the track (Monaco's,
+//           midway between the start straight and the Swimming Pool) in beside it, a pit
+//           wall's width off, so the garage block behind it stays clear of other roads.
 //
 // World mapping: world.x = x, world.z = -y (so north is -Z, and a top-down view
 // with -Z up matches the map).
@@ -50,6 +53,7 @@ export const PIT = {
   wallClear: 0.3, // outer wall face distance outside the lane edge (m)
   garages: 11, // one per team on the grid
   garagePitch: 24, // m of frontage per garage
+  garageDepth: 16, // m from the facade to the back of the garage block
   // pit box painted on the working lane in front of each team's garage; the car's
   // origin stops on its centre with the front axle on the stop line
   box: { length: 7.2, width: 3.4, stopLine: 1.75 },
@@ -894,7 +898,7 @@ export class TrackPath {
    * Nearest point on the centreline. hint = last known sample index (or -1 for
    * a full search). Returns { i, s, lateral } where lateral > 0 is left of centre.
    */
-  query(x, z, hint = -1) {
+  query(x, z, hint = -1, span = 40) {
     let best = -1, bestD = Infinity;
     const scan = (i) => {
       const dx = x - this.px[i], dz = z - this.pz[i];
@@ -905,7 +909,7 @@ export class TrackPath {
       }
     };
     if (hint < 0) for (let i = 0; i < this.N; i++) scan(i);
-    else for (let k = -40; k <= 40; k++) scan(this.wrap(hint + k));
+    else for (let k = -span; k <= span; k++) scan(this.wrap(hint + k));
     const i = best;
     const along = (k) => (x - this.px[k]) * this.tx[k] + (z - this.pz[k]) * this.tz[k];
     const left = (k) => (x - this.px[k]) * this.leftX(k) + (z - this.pz[k]) * this.leftZ(k);
@@ -979,16 +983,82 @@ export class PitPath {
     this.main = main;
     const hw = main.hw;
     let pts = def.points.map(([x, y]) => [x, -y]);
+    // Nearest point on the stretch of lap the lane runs beside (entry to exit), not the
+    // whole lap: mid-lane another section can be nearer (Monaco's Swimming Pool), which
+    // would stall the lane's lap distance and put it on that section's side.
+    const qa = main.query(...pts[0]), qb = main.query(...pts[pts.length - 1]);
+    const span = ((((qb.s - qa.s) % main.length) + main.length) % main.length) / main.ds;
+    const mid = main.wrap(Math.round(qa.s / main.ds + span / 2));
+    const near = (x, z) => main.query(x, z, mid, Math.ceil(span / 2) + 6);
+    const need = hw + PIT.wallGap + PIT.hw;
+    let q0 = pts.map(([x, z]) => near(x, z));
+    // hug: rebuild the lane beside the track, its offset at each lap distance taken from
+    // the data but capped (a soft minimum) at just past a pit wall's width, then smoothed.
+    // It leaves and rejoins where the data does. Once clear of the track it is offset from
+    // a smoothed copy of the centreline, so it cuts across the inside of a corner tighter
+    // than the offset (Anthony Noghes) instead of folding over itself.
+    if (def.hug) {
+      const target = need + 0.4, knee = 4, L = main.length, mN = main.N;
+      const lenS = span * main.ds;
+      const prof = [];
+      for (const q of q0) {
+        let s = (((q.s - qa.s) % L) + L) % L;
+        if (s > lenS + 20) s -= L; // a hair before the entry
+        if (prof.length && s <= prof[prof.length - 1][0] + 0.5) continue; // inside a corner: keep the first
+        const d = Math.abs(q.lateral), t = Math.min(1, Math.max(0, d - (target - knee)) / (2 * knee));
+        prof.push([s, Math.sign(q.lateral) * (d < target + knee ? d - knee * t * t : target)]);
+      }
+      const s0 = prof[0][0], s1 = prof[prof.length - 1][0];
+      const n = Math.max(2, Math.round((s1 - s0) / 2) + 1);
+      const lat = new Float64Array(n);
+      for (let k = 0, m = 0; k < n; k++) {
+        const sk = s0 + ((s1 - s0) * k) / (n - 1);
+        while (m + 2 < prof.length && prof[m + 1][0] < sk) m++;
+        const [sa, la] = prof[m], [sb, lb] = prof[m + 1];
+        lat[k] = la + (lb - la) * Math.min(1, Math.max(0, (sk - sa) / (sb - sa)));
+      }
+      const latS = lat.map((_, k) => {
+        const r = Math.min(5, k, n - 1 - k); // +-10 m, narrowing to the ends so they stay put
+        let sum = 0;
+        for (let d = -r; d <= r; d++) sum += lat[k + d];
+        return sum / (2 * r + 1);
+      });
+      const r = Math.round(20 / main.ds);
+      const cx = boxFilter(boxFilter(main.px, r), r), cz = boxFilter(boxFilter(main.pz, r), r);
+      const at = (arr, f) => {
+        const i = Math.floor(f), t = f - i;
+        return arr[main.wrap(i)] * (1 - t) + arr[main.wrap(i + 1)] * t;
+      };
+      pts = Array.from(latS, (l, k) => {
+        const f = (qa.s + s0 + ((s1 - s0) * k) / (n - 1)) / main.ds;
+        const tx = at(cx, f + 1) - at(cx, f - 1), tz = at(cz, f + 1) - at(cz, f - 1);
+        const tl = Math.hypot(tx, tz) || 1;
+        const b = smoothstep(0, target, Math.abs(l)); // on the track at the merges, smoothed once clear
+        const ox = at(main.px, f) * (1 - b) + at(cx, f) * b, oz = at(main.pz, f) * (1 - b) + at(cz, f) * b;
+        let nx = main.leftX(main.wrap(Math.round(f))) * (1 - b) + (tz / tl) * b;
+        let nz = main.leftZ(main.wrap(Math.round(f))) * (1 - b) + (-tx / tl) * b;
+        const nl = Math.hypot(nx, nz) || 1;
+        return [ox + (nx / nl) * l, oz + (nz / nl) * l];
+      });
+      // the smoothed centreline runs inside a bend: where that brings the lane closer to
+      // the real track than intended (a bend away from the lane), push it back out
+      q0 = pts.map(([x, z]) => near(x, z));
+      const push = boxFilter(minFilter(Float64Array.from(q0, (q, k) => Math.min(0, Math.abs(q.lateral) - Math.abs(latS[k]))), 3), 3);
+      pts = pts.map(([x, z], k) => {
+        const q = q0[k], w = -push[k] * Math.sign(q.lateral);
+        return [x + main.leftX(q.i) * w, z + main.leftZ(q.i) * w];
+      });
+      q0 = pts.map(([x, z]) => near(x, z));
+    }
     // The game's asphalt can be wider than the real track, so a lane taken from real
     // data may sit closer to it than a pit wall needs. Where that happens, slide the
     // whole separated part of the lane out by the shortfall (the merges stay put).
-    const need = hw + PIT.wallGap + PIT.hw;
-    const q0 = pts.map(([x, z]) => main.query(x, z));
     let nudge = 0;
     const sep = (k) => Math.abs(q0[k].lateral) >= hw + 2;
     for (let k = 1; k + 1 < q0.length; k++) {
       // only sustained stretches beside the track, not points on the way in or out of a merge
-      if (!sep(k - 1) || !sep(k) || !sep(k + 1)) continue;
+      // (a hugged lane is already a pit wall's width off: only its merges come closer)
+      if (def.hug || !sep(k - 1) || !sep(k) || !sep(k + 1)) continue;
       nudge = Math.max(nudge, need - Math.abs(q0[k].lateral));
     }
     this.nudge = nudge;
@@ -1031,7 +1101,7 @@ export class PitPath {
     this.mainLat = new Float64Array(N);
     let prev = null, sideSum = 0;
     for (let j = 0; j < N; j++) {
-      const q = main.query(this.px[j], this.pz[j]);
+      const q = near(this.px[j], this.pz[j]);
       this.mainLat[j] = q.lateral;
       if (Math.abs(q.lateral) > hw) sideSum += Math.sign(q.lateral);
       let s = q.s;
@@ -1065,7 +1135,9 @@ export class PitPath {
     // centred on the start line when it is alongside
     const k = new Float64Array(N);
     for (let j = 2; j < N - 2; j++) k[j] = Math.abs(angleDiff(this.heading[j + 2], this.heading[j - 2])) / (4 * this.ds);
-    const straight = Array.from({ length: N }, (_, j) => j >= 2 && j < N - 2 && k[j] < 1 / 250 && clear(j));
+    // (a hugged lane follows the track's own gentle bends, e.g. Monaco's start straight)
+    const straightK = def.hug ? 1 / 120 : 1 / 250;
+    const straight = Array.from({ length: N }, (_, j) => j >= 2 && j < N - 2 && k[j] < straightK && clear(j));
     let run = null;
     for (const [j0, count] of flagRuns(straight, false)) if (!run || count > run[1]) run = [j0, count];
     if (!run || run[1] * this.ds <= 80) {
