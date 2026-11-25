@@ -11,8 +11,8 @@
 //   engine         power unit and gearbox (rear-end hits, and heavy hits anywhere): power.
 // The monocoque and halo are the survival cell: they never break.
 //
-// Damage comes from wall impacts (physics.js, impact()) and from other cars (ai.js,
-// hitPart(): only the parts whose collision boxes touched). Each part is described by its outermost
+// Damage comes from wall impacts (physics.js, impact()), from other cars (ai.js,
+// hitPart(): only the parts whose collision boxes touched) and from landings (landing()). Each part is described by its outermost
 // points on the car. The wall touches the car at whichever point sticks out furthest
 // towards it, and the hit then crushes into the car to a depth that grows with the
 // speed into the wall: every part with a point inside that depth is hit, harder the
@@ -62,6 +62,13 @@ export const DAMAGE = {
   noseWing: 0.5, // share of a hit on the nose's tip that each front wing half takes
   diffuser: 0.5, // share of a hit on the gearbox that the floor (diffuser) on that side takes
   wingCrush: 0.1, // m a wing is crushed past its limit (ai.js) for a full hit: a fast clip snaps it, a steady shove bends it
+  // landings (landing()): the speed into the road at the point that came down
+  landMin: 2.5, // m/s: softer than this is free (the suspension takes it)
+  landFull: 9, // m/s: a full hit (≈ a 4 m drop)
+  landTilt: 1.5, // a landing tilted from flat is worse: × (1 + this × sin(tilt))
+  landSuspension: 0.8, // a tyre's corner: its suspension, per unit of hit ...
+  landFloor: 0.35, // ... the floor on that side (the plank bottoms out) ...
+  landTyre: 0.5, // ... and its tyre, by the hit past this
 };
 
 /**
@@ -224,6 +231,27 @@ export class CarDamage {
         if (x > WING[0]) for (const s of [0, 1]) this.add('wing', s, amount * D.noseWing * K.wing);
         break;
     }
+  }
+
+  /**
+   * The car came down on the road at one of its ground points (GROUND in carShape.js) at
+   * `speed` m/s into it; tilt (rad): how far from flat it was against the road, the larger
+   * of pitch and roll. Suspension and the floor take a landing first, the tyre too on a hard
+   * one; a tilted landing (nose first, on one wheel) puts it all through fewer points and is
+   * worse. On a tail or wing tip: the floor (diffuser) or that wing.
+   */
+  landing(point, speed, tilt = 0) {
+    const hit = Math.min(1.5, ((speed - D.landMin) / (D.landFull - D.landMin)) * (1 + D.landTilt * Math.sin(Math.min(Math.abs(tilt), Math.PI / 2))));
+    if (hit <= 0) return;
+    if (point.wheel !== null) {
+      const c = point.wheel;
+      this.add('suspension', c, hit * D.landSuspension);
+      this.add('floor', c % 2, hit * D.landFloor);
+      this.add('tyre', c, (hit - D.landTyre) * K.tyre);
+    } else if (point.part === 'floor') {
+      this.add('floor', point.side, hit * K.floor);
+      this.add('engine', null, (hit - 0.6) * 0.25); // a hard hit on the tail shakes the gearbox
+    } else if (point.part === 'wing') this.add('wing', point.side, hit * K.wing);
   }
 
   add(part, side, amount) {

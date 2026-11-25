@@ -363,6 +363,13 @@ export class AIDriver {
     const P = car.track;
     const L = P.length;
     if (sinceGreen < this.reaction) return { steer: 0, throttle: 0, brake: 1 };
+    // pitched or rolled past the cap in the air (physics.js): with resets it's put back on the
+    // line, in no-resets mode it retires on the spot
+    if (car.wrecked) {
+      if (this.resets) this.respawn(field);
+      else this.entry.retire?.();
+      return { steer: 0, throttle: 0, brake: 0 };
+    }
     // in the air nothing the driver does reaches the road: off the pedals, wheel straight,
     // and no plans made or timers run (stuck, mistakes, respawns, pit stops) until it lands.
     // Then it carries on as after a spin: whatever it was in the middle of is over, and the

@@ -11,6 +11,7 @@
 //                       point, or null
 //   boxCorners(b, out?) a world box's four plan-view corners
 //   boxGone(car, def)   the part a box stands for has broken off the car
+//   GROUND              the points the car meets the ground with, off its tyres (landings)
 //
 // Box positions come from the damage points (PARTS in damage.js) and the wheel layout
 // (WHEELS in car.js), so each part's position is defined in one place. The heights are
@@ -74,6 +75,27 @@ export const BOXES = [
     name: `wheel${CORNER[c]}`, part: 'tyre', i: c, kind: 'wheel',
     x0: w.x - w.r, x1: w.x + w.r, y0: w.y - w.w / 2, y1: w.y + w.w / 2, h0: 0, h1: 2 * w.r,
   })),
+];
+
+/**
+ * Where the car meets the ground when it isn't sitting on its four tyres (in the air: a
+ * pivot on one end or side, a landing): each tyre's outer edge under its axle, the
+ * diffuser's two trailing corners (the floor's rake lifts them TAIL off the road) and the
+ * front wing's endplate feet. Car frame (x forward, y left, h above the road with the car
+ * sitting level). wheel: the corner (FL, FR, RL, RR) or null; part / side: what a hard
+ * landing there damages; def: the BOXES entry it belongs to (gone with it, see boxGone).
+ */
+const TAIL = 0.1;
+const box = (name) => BOXES.find((b) => b.name === name);
+export const GROUND = [
+  ...WHEELS.map((w, c) => ({
+    name: `wheel${CORNER[c]}`, x: w.x, y: w.y + (Math.sign(w.y) * w.w) / 2, h: 0, wheel: c, part: 'tyre', side: c, def: box(`wheel${CORNER[c]}`),
+  })),
+  ...[0, 1].map((s) => ({ name: `tail${s ? 'R' : 'L'}`, x: gearbox.x0, y: s ? gearbox.y0 : gearbox.y1, h: TAIL, wheel: null, part: 'floor', side: s, def: box('gearbox') })),
+  ...[0, 1].map((s) => {
+    const def = box(s ? 'wingR' : 'wingL');
+    return { name: `wingTip${s ? 'R' : 'L'}`, x: def.x1, y: s ? def.y0 : def.y1, h: def.h0, wheel: null, part: 'wing', side: s, def };
+  }),
 ];
 
 /**
