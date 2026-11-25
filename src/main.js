@@ -723,6 +723,7 @@ async function start() {
       }
       COMPOUND_LIST.forEach((c, i) => input.hit(`Digit${i + 1}`) && pickCompound(c));
       if (input.hit('KeyF')) toggleWing();
+      if (import.meta.env.DEV && input.hit('KeyL')) (watching ? watching.physics : physics).launch({ vy: 6, pitchRate: -1.5 }); // debug: launch the viewed car
       if (input.hit('KeyO')) timer.flash = { text: `COLLISION BOXES ${shapes.toggle() ? 'ON' : 'OFF'}`, until: timer.time + 1.5 };
       if (input.hit('KeyM')) {
         if (!race) timer.flash = { text: 'DIRECTOR MODE NEEDS AI OPPONENTS', until: timer.time + 2, warn: true };
