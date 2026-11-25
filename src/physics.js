@@ -28,7 +28,7 @@ import { CAR_DIMS, WHEELS } from './car.js';
 import { KERB_WIDTH, PIT } from './trackPath.js';
 import { SURFACES, TYRE, COMPOUNDS, tyreForce, tempGrip, wearGrip, peakForce, rollingCoef } from './tyres.js';
 import { CarDamage, DAMAGE } from './damage.js';
-import { carBoxes, boxGone } from './carShape.js';
+import { carBoxes, boxGone, HULL } from './carShape.js';
 
 const G = 9.81;
 const RHO = 1.225; // air density, kg/m^3
@@ -102,6 +102,22 @@ const L = A_FRONT + B_REAR;
   PARAMS.brakeDecel = (4 * peakForce(SURFACES.asphalt, (m * G) / 4) * grip * TYRE.muLongScale) / m;
 }
 
+// In the air (launch() to onLand()): no tyre forces, so the pedals and steering do nothing
+// and the yaw rate and horizontal speed carry on, with drag. Gravity pulls the car down;
+// downforce fades as the nose rises against the airflow and turns to lift past liftAngle,
+// and the floor's share of it (ground effect) fades with height. Pitch and roll rates damp
+// slowly, and at speed the airflow turns the nose towards the flight path, like an arrow's
+// fletching. Pitch and roll stop at the cap, which marks the car wrecked.
+export const AIR = {
+  liftAngle: 0.35, // rad (20°) nose-up against the airflow where downforce has gone
+  maxLift: 0.6, // lift at most this share of the level downforce
+  floorShare: 0.55, // share of the downforce the floor makes from ground effect
+  groundEffect: 0.3, // m: the floor's downforce halves this high
+  pitchStiff: 0.006, // rad/s² of nose turned to the flight path, per Pa of dynamic pressure per rad
+  rateDamp: 1.5, // 1/s: pitch and roll rates decay this fast
+  cap: 1.05, // rad (60°): pitch and roll stop here and the car is wrecked
+};
+
 export const GEARS = [0, 23, 35, 46, 56, 65, 74, 83, 999]; // m/s upshift points per gear 1..8
 
 export class CarPhysics {
@@ -129,9 +145,15 @@ export class CarPhysics {
     this.speed = 0; // signed forward speed (m/s)
     this.longAccel = 0;
     this.latAccel = 0;
-    this.pitch = 0;
-    this.roll = 0;
+    this.pitch = 0; // rad, + = nose down: the suspension's tilt on the ground, the real angle in the air
+    this.roll = 0; // rad, + = left side up
     this.heave = 0;
+    this.air = 0; // m: the car's reference point above the road (0 on the ground)
+    this.vy = 0; // m/s: vertical speed, + = up
+    this.airborne = false; // from launch() to touchdown
+    this.pitchRate = 0; // rad/s, signs as pitch and roll
+    this.rollRate = 0;
+    this.wrecked = false; // pitch or roll reached AIR.cap
     this.height = pose.y ?? 0; // world height of the road under the car
     this.gradeF = 0; // slope along the car's heading (+ = uphill)
     this.gradeL = 0; // slope to the car's left (+ = left side higher)
@@ -191,9 +213,11 @@ export class CarPhysics {
     if (input.tc !== undefined) this.tc = input.tc;
 
     // --- where the car is, and the surfaces under each wheel (once per step) ---
+    const alt = this.height + this.air; // in the air: the car's own height, whatever the road does
     this.locate();
     this.classifyWheels(this.trackIndex);
     this.sampleSlope();
+    if (this.airborne) this.air = alt - this.height;
     this.prevPos.x = this.position.x;
     this.prevPos.z = this.position.z;
 
@@ -203,7 +227,8 @@ export class CarPhysics {
     // input.parked: a retired car, abandoned with the brakes on. It sits still but a hit can
     // shove it, the locked tyres scrubbing it to a stop (the brake doesn't select reverse)
     this.parked = !!input.parked;
-    if (input.hold) {
+    const hold = input.hold && !this.airborne; // the jacks and the brakes hold a car on the ground only
+    if (hold) {
       this.holdStill();
       input = { ...input, throttle: 0, brake: 0 };
     }
@@ -250,7 +275,10 @@ export class CarPhysics {
     this.dmgAero = this.damage.aero;
     this.tcActive = false;
     this.absActive = false;
-    for (let k = 0; k < n; k++) this.substep(h);
+    for (let k = 0; k < n; k++) {
+      if (this.airborne) this.substepAir(h);
+      else this.substep(h);
+    }
 
     this.collideWalls(yaw0);
     this.updateTyreState(dt);
@@ -263,11 +291,14 @@ export class CarPhysics {
     for (const w of this.wheels) {
       if (w.surface.bump) bump += Math.sin((w.dist / w.surface.bumpWavelength) * Math.PI * 2) * 0.004 * w.surface.bump;
     }
-    this.pitch += (clamp(-this.longAccel * 0.0012, -0.035, 0.035) - this.pitch) * kf;
-    this.roll += (clamp(this.latAccel * 0.0012, -0.04, 0.04) - this.roll) * kf;
-    this.heave = bump * Math.min(absV / 20, 1);
+    if (!this.airborne) {
+      // on the ground: the suspension's tilt (after a landing, it settles back to this)
+      this.pitch += (clamp(-this.longAccel * 0.0012, -0.035, 0.035) - this.pitch) * kf;
+      this.roll += (clamp(this.latAccel * 0.0012, -0.04, 0.04) - this.roll) * kf;
+    }
+    this.heave = this.airborne ? 0 : bump * Math.min(absV / 20, 1);
     // parked and all but stopped: static friction holds it, even on a steep slope
-    if (this.parked && Math.hypot(this.vel.x, this.vel.z) < 0.3 && Math.abs(this.yawRate) < 0.15) {
+    if (this.parked && !this.airborne && Math.hypot(this.vel.x, this.vel.z) < 0.3 && Math.abs(this.yawRate) < 0.15) {
       this.vel.x = this.vel.z = 0;
       this.yawRate = 0;
       this.speed = 0;
@@ -279,7 +310,7 @@ export class CarPhysics {
       }
       this.still = true;
     } else this.still = false;
-    if (input.hold) {
+    if (hold) {
       this.holdStill();
       this.position.x = this.prevPos.x;
       this.position.z = this.prevPos.z;
@@ -295,6 +326,102 @@ export class CarPhysics {
     this.speed = 0;
     this.throttle = this.brake = 0;
     for (const w of this.wheels) w.omega = 0;
+  }
+
+  /**
+   * Leave the ground: vy (m/s, + up), pitchRate and rollRate (rad/s, + = nose down, left side
+   * up). The single way a car takes off. While already in the air, adds to the current speed
+   * and rates.
+   */
+  launch({ vy = 0, pitchRate = 0, rollRate = 0 } = {}) {
+    this.vy += vy;
+    this.pitchRate += pitchRate;
+    this.rollRate += rollRate;
+    if (this.airborne) return;
+    this.airborne = true;
+    this.vy = vy;
+    this.pitchRate = pitchRate;
+    this.rollRate = rollRate;
+    // the lowest corner leaves from the road (the suspension's tilt dips one end a little)
+    this.air = Math.max(0, -lowestCorner(this.pitch, this.roll).h) + 1e-6;
+    this.still = false;
+  }
+
+  /**
+   * Touchdown: back on the tyres. vyImpact is the downward speed (m/s) of the corner that
+   * landed (for a bounce, landing damage and wrecks).
+   */
+  onLand(vyImpact) {
+    this.airborne = false;
+    this.air = 0;
+    this.vy = 0;
+    this.pitchRate = 0;
+    this.rollRate = 0;
+  }
+
+  /** A sub-step in the air: ballistic, with drag and aero, and no tyre forces. */
+  substepAir(h) {
+    const P = PARAMS, A = AIR;
+    const m = P.mass;
+    const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
+    const vx = this.vel.x * sin + this.vel.z * cos;
+    const qd = 0.5 * RHO * vx * vx;
+    const da = this.dmgAero;
+    // angle of attack: how far the nose is up from the flight path
+    const gamma = Math.atan2(this.vy, Math.max(Math.abs(vx), 1));
+    const aoa = -this.pitch - gamma;
+    const ge = 1 / (1 + (Math.max(0, this.air) / A.groundEffect) ** 2);
+    const shape = clamp(1 - aoa / A.liftAngle, -A.maxLift, 1); // 1 = full downforce, < 0 = lift
+    const downforce = qd * P.ClA * da.floor * (1 - A.floorShare + A.floorShare * ge) * shape;
+    this.downforce = downforce;
+    // drag opposes the motion (a car yawing in the air no longer points where it goes)
+    const v = Math.hypot(this.vel.x, this.vel.z);
+    const k = (0.5 * RHO * v * P.CdA * da.drag) / m; // drag / (m v)
+    const ex = -k * v * Math.sign(vx); // felt along the car, for the load transfer on landing
+
+    // straight on, slowing with drag; the yaw rate carries on
+    this.vel.x -= k * this.vel.x * h;
+    this.vel.z -= k * this.vel.z * h;
+    this.yaw += this.yawRate * h;
+    this.position.x += this.vel.x * h;
+    this.position.z += this.vel.z * h;
+    this.vy += (-G - downforce / m) * h;
+    this.air += this.vy * h;
+
+    // pitch and roll: slow damping, and the airflow turning the nose to the flight path
+    this.pitchRate += (A.pitchStiff * qd * aoa - A.rateDamp * this.pitchRate) * h;
+    this.rollRate -= A.rateDamp * this.rollRate * h;
+    this.pitch += this.pitchRate * h;
+    this.roll += this.rollRate * h;
+    if (Math.abs(this.pitch) >= A.cap) {
+      this.pitch = Math.sign(this.pitch) * A.cap;
+      if (this.pitchRate * this.pitch > 0) this.pitchRate = 0;
+      this.wrecked = true;
+    }
+    if (Math.abs(this.roll) >= A.cap) {
+      this.roll = Math.sign(this.roll) * A.cap;
+      if (this.rollRate * this.roll > 0) this.rollRate = 0;
+      this.wrecked = true;
+    }
+
+    // the wheels spin freely and carry no load
+    for (const w of this.wheels) {
+      w.load = 0;
+      w.fy = 0;
+      w.slide = 0;
+      w.slipPower = 0;
+      w.rollSpeed = 0;
+    }
+    const ks = 1 - Math.exp(-h / 0.04);
+    this.longAccel += (ex - this.longAccel) * ks;
+    this.latAccel += (0 - this.latAccel) * ks;
+
+    // touchdown: the lowest corner of the car's outline reaches the road
+    const c = lowestCorner(this.pitch, this.roll);
+    if (this.air + c.h <= 0) {
+      const vCorner = this.vy - Math.cos(this.pitch) * this.pitchRate * c.x + Math.cos(this.roll) * this.rollRate * c.y;
+      this.onLand(Math.max(0, -vCorner));
+    }
   }
 
   substep(h) {
@@ -646,6 +773,17 @@ export class CarPhysics {
     const t = g === 8 ? wv / 92 : (wv - lo) / (hi - lo);
     this.rpm = Math.max(0.18, Math.min(1, 0.45 + 0.55 * t));
   }
+}
+
+/**
+ * The lowest bottom corner of the car's outline (HULL in carShape.js) at this pitch and roll:
+ * its x, y in the car frame and h, its height relative to the car's reference point.
+ */
+function lowestCorner(pitch, roll) {
+  const sp = Math.sin(pitch), sr = Math.sin(roll);
+  const x = sp > 0 ? HULL.x1 : HULL.x0; // nose down: the front is lowest
+  const y = sr > 0 ? HULL.y0 : HULL.y1; // left side up: the right is lowest
+  return { x, y, h: HULL.h0 - sp * x + sr * y };
 }
 
 function approach(x, target, step) {
