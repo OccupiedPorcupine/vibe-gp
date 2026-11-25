@@ -13,6 +13,9 @@
 //    tyre, a nose under a rear wing, a T-bone, a 2 s rub side by side, a wing held against
 //    a tyre on full throttle, and launches (#21): a front tyre into another car's rear tyre. Each checks which parts took damage and how the cars
 //    moved.
+// 5. Airborne and landing (#20, #22) on the Test Oval and Spa.
+// 6. The start: a brake held as the car is released (the lights going out, off the jacks)
+//    holds it on its brakes instead of selecting reverse.
 //
 // Exits 1 if any check fails.
 globalThis.location ??= { search: '' };
@@ -22,7 +25,7 @@ const { TRACKS } = await import('../src/tracks/index.js');
 const { TrackPath, boxSegment, WALL_THICKNESS } = await import('../src/trackPath.js');
 const { CarPhysics } = await import('../src/physics.js');
 const { carBoxes, boxOverlap } = await import('../src/carShape.js');
-const { collideCars, CONTACTS, Race } = await import('../src/ai.js');
+const { collideCars, CONTACTS, Race, AIDriver, teamPace } = await import('../src/ai.js');
 const { TEAMS } = await import('../src/teams.js');
 
 let failures = 0;
@@ -377,10 +380,11 @@ console.log('\ncar-to-car scenarios (Suzuka start straight)');
   // --- 3. T-bone at speed: into the side of a car stopped across the track
   {
     // B stands across the track, pointing left, so its left side faces A; A's nose tip
-    // 0.3 m from B's sidepods
+    // 0.3 m from B's sidepods. B has been driving (off the brake) and now holds it, as a
+    // spun car in a race does: the brake selects reverse
     const A = car(0, 0, 25), B = car(2.95 + 0.85 + 0.3, 0, 0, Math.PI / 2);
     let depth = 0, minGap = Infinity;
-    const c = run(A, B, 120, {}, { brake: 1 }, () => {
+    const c = run(A, B, 120, {}, (k) => (k === 0 ? {} : { brake: 1 }), () => {
       depth = Math.max(depth, sunk(A, B));
       minGap = Math.min(minGap, along(B) - along(A));
     });
@@ -943,6 +947,107 @@ console.log('\nairborne (Test Oval, and a crest at Spa)');
       `uphill: ${up.air.toFixed(3)} m up after the first frame, ${up.frames} frames to the first touch; downhill (s 2747): ${down.air.toFixed(3)} m, ${down.frames} frames`);
   }
   check(nan === 0, 'no NaN in any flight', `${nan} bad steps`);
+}
+
+// ---------------------------------------------------------------------------------------
+// 6. The start: a brake held through the release must not select reverse (the AI holds the
+//    brake through its reaction time, so every car used to roll back at the green)
+{
+  console.log('\nthe start (Suzuka grid, Spa slope)');
+  const dt = 1 / 120;
+  const SUZ = new TrackPath(TRACKS.find((t) => t.id === 'suzuka'));
+  const SPA = new TrackPath(TRACKS.find((t) => t.id === 'spa'));
+  const along = (car, P) => {
+    const s = car.trackS;
+    return s > P.length / 2 ? s - P.length : s;
+  };
+  // a full grid from Race, the player AI-driven as in ai-check: 1 s on the lights, 3 s after
+  {
+    const player = new CarPhysics(SUZ, SUZ.gridPose(0));
+    const race = new Race(SUZ, TEAMS[TEAMS.length - 1], player, TEAMS, { opponents: 10, laps: 1, level: 'normal', seed: 1, chaos: 0 });
+    player.reset(race.playerGrid());
+    race.player.driver = new AIDriver(race.player, race.line, { pace: teamPace(TEAMS.length - 1, 'normal'), seed: 99 });
+    let grid, back = 0, worst = '', slow = 0;
+    for (let f = 0; f < 120 * 4; f++) {
+      const holding = f < 120;
+      const ctl = race.player.driver.drive(race.entries, holding ? 0 : race.sinceGreen, dt);
+      player.step(holding ? { ...ctl, hold: true } : ctl, dt);
+      race.stepAI(holding, dt, { resets: true });
+      if (f === 119) grid = new Map(race.entries.map((e) => [e, along(e.physics, SUZ)]));
+      if (!holding) {
+        for (const e of race.entries) {
+          const d = grid.get(e) - along(e.physics, SUZ);
+          if (d > back) [back, worst] = [d, e.team.name];
+          slow = Math.min(slow, e.physics.speed);
+        }
+      }
+    }
+    check(back < 0.01, `full grid start: no car rolls back from its grid spot (${race.entries.length} cars)`,
+      `furthest back ${(back * 100).toFixed(1)} cm${worst ? ` (${worst})` : ''}, lowest speed ${slow.toFixed(2)} m/s`);
+  }
+  // one car: held on the jacks, then released with the brake pressed
+  const released = (P, s, frames) => {
+    const car = new CarPhysics(P, P.poseAt(s, 0));
+    for (let i = 0; i < 120; i++) car.step({ throttle: 0, brake: 1, steer: 0, hold: true }, dt);
+    const x = car.position.x, z = car.position.z;
+    let slow = 0;
+    for (let i = 0; i < frames; i++) {
+      car.step({ throttle: 0, brake: 1, steer: 0 }, dt);
+      slow = Math.min(slow, car.speed);
+    }
+    return { car, moved: Math.hypot(car.position.x - x, car.position.z - z), slow };
+  };
+  {
+    const r = released(SUZ, 0, 240);
+    const { car } = r;
+    for (let i = 0; i < 12; i++) car.step({ throttle: 0, brake: 0, steer: 0 }, dt); // let go
+    let back = 0;
+    for (let i = 0; i < 240; i++) {
+      car.step({ throttle: 0, brake: 1, steer: 0 }, dt); // and press again
+      back = Math.min(back, car.speed);
+    }
+    check(r.moved < 0.01 && r.slow > -0.05 && back < -3,
+      'held, then released with the brake on: it stays put; let go and pressed again, it reverses',
+      `moved ${(r.moved * 100).toFixed(1)} cm on the brake, then reversing at ${(-back).toFixed(1)} m/s`);
+  }
+  {
+    const grade = (s) => {
+      const c = new CarPhysics(SPA, SPA.poseAt(s, 0));
+      c.step({ throttle: 0, brake: 0, steer: 0, hold: true }, dt);
+      return c.gradeF;
+    };
+    let s = 0, g = 0;
+    for (let t = 0; t < SPA.length; t += 25) {
+      const gt = Math.abs(grade(t));
+      if (gt > g) [s, g] = [t, gt];
+    }
+    const r = released(SPA, s, 360);
+    check(r.moved < 0.01, `released on the brake on Spa's steepest slope (s ${s}, ${(g * 100).toFixed(1)}%): it doesn't creep`,
+      `moved ${(r.moved * 100).toFixed(1)} cm in 3 s`);
+  }
+  // reversing as before: stopped from speed with the brake held, or pressed at a standstill
+  {
+    const pose = SUZ.poseAt(200, 0);
+    const car = new CarPhysics(SUZ, pose);
+    car.vel.x = Math.sin(pose.yaw) * 20;
+    car.vel.z = Math.cos(pose.yaw) * 20;
+    for (const w of car.wheels) w.omega = 20 / w.r;
+    car.step({ throttle: 0, brake: 0, steer: 0 }, dt); // driving along, off the brake
+    let back = 0;
+    for (let i = 0; i < 480; i++) {
+      car.step({ throttle: 0, brake: 1, steer: 0 }, dt);
+      back = Math.min(back, car.speed);
+    }
+    const still = new CarPhysics(SUZ, pose);
+    still.step({ throttle: 0, brake: 0, steer: 0 }, dt);
+    let back2 = 0;
+    for (let i = 0; i < 240; i++) {
+      still.step({ throttle: 0, brake: 1, steer: 0 }, dt);
+      back2 = Math.min(back2, still.speed);
+    }
+    check(back < -3 && back2 < -3, 'reversing still works: braked to a stop and held, or pressed at a standstill',
+      `${(-back).toFixed(1)} m/s and ${(-back2).toFixed(1)} m/s backwards`);
+  }
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks pass');
