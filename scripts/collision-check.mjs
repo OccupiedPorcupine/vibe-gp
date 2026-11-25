@@ -10,8 +10,8 @@
 //    ends up inside a wall. Each scenario lists what the old 1.4 m centre circle did
 //    (BASELINE) next to what the physics does now.
 // 4. Car-to-car scenarios (#16) on Suzuka's start straight: an endplate clipping a rear
-//    tyre, a nose under a rear wing, a T-bone, a 2 s rub side by side, and a wing held
-//    against a tyre on full throttle. Each checks which parts took damage and how the cars
+//    tyre, a nose under a rear wing, a T-bone, a 2 s rub side by side, a wing held against
+//    a tyre on full throttle, and launches (#21): a front tyre into another car's rear tyre. Each checks which parts took damage and how the cars
 //    moved.
 //
 // Exits 1 if any check fails.
@@ -468,6 +468,61 @@ console.log('\ncar-to-car scenarios (Suzuka start straight)');
       `held at the limit closing up to ${held.toFixed(2)} m/s; ${touchingAtEnd ? `still touching, A ${endGap.toFixed(2)} m/s faster` : 'apart at the end'}`);
     if (damageOn) expect(`${tag}: the wing bends (and in the end breaks)`, A.damage.wing[0] > 0.05, damaged(A));
     else expect(`${tag}: no damage`, total(A) + total(B) === 0, damaged(A));
+  }
+
+  // --- 6. Launches (#21): a front tyre running into the back of another car's rear tyre
+  // A's left front wheel lined up behind B's right rear wheel (B 1.6 m to A's left): the
+  // wing reaches the tyre first and gives way, then the tyres meet. dv: A faster by this.
+  // Each run: whether A left the ground off B's wheel, how high and for how long.
+  function launchRun(dv, { lat = 1.6, gap = 0.2, v = 40, steps = 240, turn = 0 } = {}) {
+    // B's rear tyre's back face `gap` m ahead of A's front tyre (2.09 + 2.01 m between centres)
+    const A = car(0, 0, v + dv), B = car(2.09 + 2.01 + gap, lat, v, turn);
+    const l0 = CONTACTS.launches;
+    let peak = 0, airSteps = 0, launchedAt = -1, pitch = 0, roll = 0;
+    run(A, B, steps, {}, {}, (k) => {
+      if (A.airborne) {
+        airSteps++;
+        if (launchedAt < 0) launchedAt = k;
+        pitch = Math.max(pitch, -A.pitch); // nose up
+        roll = Math.max(roll, Math.abs(A.roll));
+      }
+      peak = Math.max(peak, A.air ?? 0);
+    });
+    return { A, B, launches: CONTACTS.launches - l0, peak, air: airSteps / 120, launchedAt, pitch, roll };
+  }
+  const deg = (x) => `${((x * 180) / Math.PI).toFixed(0)}°`;
+  const showLaunch = (tag, r) => console.log(`    ${tag}: ${r.launches} launch${r.launches === 1 ? '' : 'es'}; A up ${r.peak.toFixed(2)} m, ${r.air.toFixed(2)} s off the road (bounces too), nose up to ${deg(r.pitch)}, roll to ${deg(r.roll)}${r.A.wrecked ? ', WRECKED' : ''} | A ${damaged(r.A)} | B ${damaged(r.B)}`);
+  {
+    const r = launchRun(15);
+    showLaunch('launch, 15 m/s', r);
+    expect('launch, 15 m/s front wheel into a rear wheel: the car behind goes up', r.launches === 1 && r.peak > 0.3 && r.air > 0.2, `${r.launches} launches, up ${r.peak.toFixed(2)} m for ${r.air.toFixed(2)} s`);
+    expect('launch, 15 m/s: the car in front takes the hit on its rear tyre', r.B.damage.tyre[3] > 0 || r.B.damage.suspension[3] > 0, damaged(r.B));
+    expect('launch, 15 m/s: the car in front stays on the ground', !r.B.airborne && (r.B.air ?? 0) === 0);
+  }
+  {
+    const r = launchRun(20);
+    showLaunch('launch, 20 m/s', r);
+    expect('launch, 20 m/s: rises about 1-2 m', r.launches === 1 && r.peak > 0.8 && r.peak < 2.5, `up ${r.peak.toFixed(2)} m`);
+  }
+  {
+    const r = launchRun(3);
+    showLaunch('no launch, 3 m/s', r);
+    expect('no launch at 3 m/s closing', r.launches === 0 && r.peak === 0, `${r.launches} launches, up ${r.peak.toFixed(2)} m`);
+  }
+  {
+    // wheels side by side: A's front wheel beside B's rear wheel, the same speed, A leaning on B
+    const A = car(0, 0, 50), B = car(2.09 + 1.29 + 0.3, 1.9, 50);
+    const l0 = CONTACTS.launches;
+    let touched = 0;
+    run(A, B, 240, { throttle: 0.6, steer: 0.015 }, { throttle: 0.6 }, () => { if (overlapping(A, B)) touched++; });
+    console.log(`    no launch, wheels side by side: touching ${touched} steps, ${CONTACTS.launches - l0} launches`);
+    expect('no launch with the wheels side by side', touched > 0 && CONTACTS.launches === l0 && !A.airborne && !B.airborne, `touching ${touched} steps, ${CONTACTS.launches - l0} launches`);
+  }
+  {
+    // front wing (and nose) into the gearbox, the wheels not lined up: no launch
+    const r = launchRun(12, { lat: 0, gap: 1.6 });
+    showLaunch('no launch, wing into the gearbox', r);
+    expect('no launch from a wing and nose into a gearbox', r.launches === 0 && r.peak === 0, `${r.launches} launches, up ${r.peak.toFixed(2)} m`);
   }
 }
 

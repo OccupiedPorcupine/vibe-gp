@@ -881,7 +881,7 @@ export class AIDriver {
  * ('wingL>wheelRR', names sorted). step: collideCars() calls so far; each car's touched[i]
  * is the step its box i last touched another car (for the debug overlay).
  */
-export const CONTACTS = { touches: 0, hard: 0, involving: new Map(), parts: new Map(), step: 0 };
+export const CONTACTS = { touches: 0, hard: 0, involving: new Map(), parts: new Map(), launches: 0, step: 0 };
 let stepNo = 0;
 
 /** Car-to-car contact for every pair in the field, once per physics step of dt seconds. */
@@ -916,6 +916,20 @@ const CONTACT = {
   fragileHurt: 0.3, // damage a wing does to what it hits, relative to a solid part
   damageScale: 0.8, // closing speed × this, then like a wall impact (cars give a little)
   fresh: 60, // steps (0.5 s) apart before a pair's next touch counts as a new one
+};
+// Launches: a front tyre running into the back of another car's rear tyre. That tyre's back
+// face rolls upwards at about the road speed, so the grip between the two tyres pushes the
+// riding tyre up: an impulse up at that wheel, a share (grip) of the push between the tyres.
+// Ahead of the centre of mass and out to one side, it lifts the nose and that side; the
+// wheels still on the road take the rest (CarPhysics.launch resolves the kick against the
+// road), so the car pivots up about them. The car in front just takes the wheel-to-wheel
+// hit (tyre and suspension damage, some spin), as any solid contact.
+const LAUNCH = {
+  minClosing: 5, // m/s: the front tyre running into the rear tyre at least this fast
+  minOverlap: 0.1, // m of the two tyres' widths lined up across the cars
+  behind: 0.7, // the contact's normal within ~45° of the car in front's heading
+  grip: 0.25, // tyre-on-tyre friction: the upward impulse as a share of the push between the tyres
+  maxKick: 6, // m/s: the upward impulse at most this (as a speed of the whole car)
 };
 const N_BOX = BOXES.length;
 const hullA = {}, hullB = {};
@@ -987,6 +1001,8 @@ function collidePair(A, B, dt) {
     } else if (!fragile || hit.depth > fragile.depth) fragile = hit;
   }
 
+  const launch = launchFrom(A, B, ba, bb, n);
+
   // the parts that touched, and how hard: the closing speed across each overlap, at its
   // contact point (a spinning car's swinging tail hits harder than its centre moves)
   let speed = 0, sx = 0, sz = 0, first = 0;
@@ -1052,6 +1068,10 @@ function collidePair(A, B, dt) {
   if (fresh) { rec.peakA.fill(0); rec.peakB.fill(0); }
   damageParts(A, ba, hitA, rec.peakA);
   damageParts(B, bb, hitB, rec.peakB);
+  if (launch) {
+    launch.car.launch(launch);
+    CONTACTS.launches++;
+  }
   if (!(fresh && speed > 1)) return 0;
   const pair = [ba[touching[first].i].def.name, bb[touching[first].j].def.name].sort().join('>');
   CONTACTS.parts.set(pair, (CONTACTS.parts.get(pair) ?? 0) + 1);
@@ -1061,6 +1081,49 @@ function collidePair(A, B, dt) {
 /** A wing crushed `depth` m further past its limit: it bends by that much (DAMAGE.wingCrush); Infinity snaps it. */
 function crush(car, d, depth) {
   if (car.damageOn) car.damage.hitPart(d.part, d.i, Math.min(depth / DAMAGE.wingCrush, 1));
+}
+
+/**
+ * A front wheel of one car running into a rear wheel of the other from behind, fast enough
+ * and lined up enough to ride up it: { car, vy, pitchRate, rollRate } for launch(), or null.
+ * From the velocities before this step's push.
+ */
+function launchFrom(A, B, ba, bb, n) {
+  let best = null;
+  for (let k = 0; k < n; k++) {
+    const { i, j, hit } = touching[k];
+    const da = ba[i].def, db = bb[j].def;
+    if (da.kind !== 'wheel' || db.kind !== 'wheel') continue;
+    // which car's front wheel is on which car's rear wheel (wheels: FL FR RL RR)
+    let rider, lead, rw, lw, toLead;
+    if (da.i < 2 && db.i >= 2) [rider, lead, rw, lw, toLead] = [A, B, ba[i], bb[j], 1];
+    else if (db.i < 2 && da.i >= 2) [rider, lead, rw, lw, toLead] = [B, A, bb[j], ba[i], -1];
+    else continue;
+    if (rider.airborne) continue;
+    const fx = Math.sin(lead.yaw), fz = Math.cos(lead.yaw); // the car in front's heading
+    // from behind: the push points along the car in front's heading
+    if ((hit.nx * fx + hit.nz * fz) * toLead < LAUNCH.behind) continue;
+    const closing = (rider.vel.x - lead.vel.x) * fx + (rider.vel.z - lead.vel.z) * fz;
+    if (closing < LAUNCH.minClosing) continue;
+    // the tyres lined up across the cars (in the car in front's frame)
+    const lx = fz, lz = -fx;
+    const apart = Math.abs((rw.cx - lw.cx) * lx + (rw.cz - lw.cz) * lz);
+    if (rw.hy + lw.hy - apart < LAUNCH.minOverlap) continue;
+    if (best && closing <= best.closing) continue;
+    // the push between the tyres (Δv each, as collidePair's impulse), and the grip's share of
+    // it upwards, at the riding wheel (x forward, y left of the centre of mass)
+    const push = ((1 + CONTACT.e) / 2) * closing;
+    const kick = Math.min(LAUNCH.maxKick, LAUNCH.grip * push); // J / m
+    const d = rw.def, x = (d.x0 + d.x1) / 2, y = (d.y0 + d.y1) / 2;
+    best = {
+      car: rider,
+      closing,
+      vy: kick,
+      pitchRate: -(kick * PARAMS.mass * x) / PARAMS.pitchInertia, // pushed up ahead of the CoG: nose up
+      rollRate: (kick * PARAMS.mass * y) / PARAMS.rollInertia, // pushed up on the left: left up
+    };
+  }
+  return best;
 }
 
 /** Keep a box's hardest hit this step, and where it landed. */
