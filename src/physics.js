@@ -153,6 +153,7 @@ export class CarPhysics {
 
   reset(pose) {
     this.trackIndex = -1; // nearest centreline sample (search hint)
+    this.reverseArmed = false; // the brake selects reverse only once it has been let go (see step)
     this.trackS = 0; // distance along the lap (m)
     this.lateral = 0; // offset from centreline, + = left
     this.pitIndex = -1; // nearest pit lane sample (search hint)
@@ -267,6 +268,10 @@ export class CarPhysics {
       this.holdStill();
       input = { ...input, throttle: 0, brake: 0 };
     }
+    // a brake held through a release (off the jacks, the lights going out, a reset) only
+    // holds the car on its brakes: reverse needs the pedal let go and pressed again
+    if (hold) this.reverseArmed = false;
+    else if (!input.brake) this.reverseArmed = true;
 
     // --- pedals (rate limited); the pit limiter closes the throttle above the limit ---
     const limited = this.inPitLane && this.speed > PIT.speedLimit - 0.3;
@@ -332,8 +337,10 @@ export class CarPhysics {
       this.roll += (this.tiltRoll() - this.roll) * kf;
     }
     this.heave = this.airborne ? 0 : bump * Math.min(absV / 20, 1);
-    // parked and all but stopped: static friction holds it, even on a steep slope
-    if (this.parked && !this.airborne && Math.hypot(this.vel.x, this.vel.z) < 0.3 && Math.abs(this.yawRate) < 0.15) {
+    // parked, or held on the brakes, and all but stopped: static friction holds it, even on
+    // a steep slope
+    const onBrakes = this.parked || (!this.reverseArmed && this.brake > 0 && this.throttle === 0);
+    if (onBrakes && !this.airborne && Math.hypot(this.vel.x, this.vel.z) < 0.3 && Math.abs(this.yawRate) < 0.15) {
       this.vel.x = this.vel.z = 0;
       this.yawRate = 0;
       this.speed = 0;
@@ -678,7 +685,7 @@ export class CarPhysics {
         if (this.tc) axleTorque = Math.min(axleTorque, (W[2].capX + W[3].capX) * D.rearRadius) * this.tcGain;
       } else brakeForce = Math.max(brakeForce, P.maxBrakeForce * 0.5 * this.throttle); // throttle while rolling back = brake
     } else if (wRear > 1) axleTorque = -P.engineBrake;
-    if (this.brake > 0 && vx <= 0.5 && this.throttle === 0 && !this.parked) {
+    if (this.brake > 0 && vx <= 0.5 && this.throttle === 0 && !this.parked && this.reverseArmed) {
       brakeForce = 0; // stopped: the brake key selects reverse
       if (vx > -P.reverseMax) axleTorque = -P.reverseTorque * this.brake;
     }
