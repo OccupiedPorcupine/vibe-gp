@@ -855,13 +855,17 @@ export class AIDriver {
   }
 }
 
-/** Car-to-car contacts so far (for scripts/ai-check.mjs): any closing touch, and hard ones (> 5 m/s). */
-export const CONTACTS = { touches: 0, hard: 0, involving: new Map() };
+/**
+ * Car-to-car contacts so far (for scripts/ai-check.mjs): new touches closing at over 1 m/s,
+ * and hard ones (> 5 m/s). step: collideCars() calls so far; each car's touched[i] is the
+ * step its box i last touched another car (for the debug overlay).
+ */
+export const CONTACTS = { touches: 0, hard: 0, involving: new Map(), step: 0 };
 let stepNo = 0;
 
 /** Car-to-car contact for every pair in the field, once per physics step of dt seconds. */
 export function collideCars(field, dt = 1 / 120) {
-  stepNo++;
+  CONTACTS.step = ++stepNo;
   for (let a = 0; a < field.length; a++) {
     for (let b = a + 1; b < field.length; b++) {
       const hit = collidePair(field[a].physics, field[b].physics, dt);
@@ -934,8 +938,10 @@ function collidePair(A, B, dt) {
   const rvx = B.vel.x - A.vel.x, rvz = B.vel.z - A.vel.z;
   let speed = 0, sx = 0, sz = 0;
   hitA.amount.fill(0); hitB.amount.fill(0);
+  const ta = (A.touched ??= new Float64Array(N_BOX).fill(-1e9)), tb = (B.touched ??= new Float64Array(N_BOX).fill(-1e9));
   for (let k = 0; k < n; k++) {
     const { i, j, hit } = touching[k];
+    ta[i] = tb[j] = stepNo;
     const closing = Math.max(0, -(rvx * hit.nx + rvz * hit.nz));
     if (closing > speed) { speed = closing; sx = hit.nx; sz = hit.nz; }
     const h = damageHit(closing);

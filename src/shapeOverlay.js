@@ -3,10 +3,13 @@
 // contacts can be seen. Key O in a race toggles it. Off, it does nothing: no geometry is made
 // until it is first switched on, and update() returns straight away.
 //
-// Colours: solid parts cyan, fragile ones (wings) orange, wheels yellow; any box that
-// overlaps a box of another car turns red.
+// Colours: solid parts cyan, fragile ones (wings) orange, wheels yellow; a box that
+// touched another car turns red for half a second (and while it overlaps one).
 import * as THREE from 'three/webgpu';
 import { BOXES, carBoxes, boxCorners, boxOverlap } from './carShape.js';
+import { CONTACTS } from './ai.js';
+
+const HOLD = 60; // steps (0.5 s) a touched box stays red
 
 const COLOUR = { solid: new THREE.Color(0x22e0ff), fragile: new THREE.Color(0xff9a1f), wheel: new THREE.Color(0xffe23a) };
 const HIT = new THREE.Color(0xff2a2a);
@@ -62,7 +65,8 @@ export class ShapeOverlay {
       for (let i = 0; i < n; i++) {
         const box = boxes[i];
         boxCorners(box, c);
-        const rgb = hit[a * n + i] ? HIT : COLOUR[box.def.kind];
+        const touched = CONTACTS.step - (cars[a].touched?.[i] ?? -1e9) < HOLD;
+        const rgb = hit[a * n + i] || touched ? HIT : COLOUR[box.def.kind];
         for (let e = 0; e < VERTS; e++) {
           const k = EDGES[e], q = k & 3;
           P[3 * v] = c[2 * q];
