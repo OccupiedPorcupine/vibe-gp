@@ -857,10 +857,11 @@ export class AIDriver {
 
 /**
  * Car-to-car contacts so far (for scripts/ai-check.mjs): new touches closing at over 1 m/s,
- * and hard ones (> 5 m/s). step: collideCars() calls so far; each car's touched[i] is the
- * step its box i last touched another car (for the debug overlay).
+ * and hard ones (> 5 m/s); parts: new touches by the pair of boxes that closed fastest
+ * ('wingL>wheelRR', names sorted). step: collideCars() calls so far; each car's touched[i]
+ * is the step its box i last touched another car (for the debug overlay).
  */
-export const CONTACTS = { touches: 0, hard: 0, involving: new Map(), step: 0 };
+export const CONTACTS = { touches: 0, hard: 0, involving: new Map(), parts: new Map(), step: 0 };
 let stepNo = 0;
 
 /** Car-to-car contact for every pair in the field, once per physics step of dt seconds. */
@@ -936,14 +937,14 @@ function collidePair(A, B, dt) {
 
   // the parts that touched, and how hard: the closing speed across each overlap
   const rvx = B.vel.x - A.vel.x, rvz = B.vel.z - A.vel.z;
-  let speed = 0, sx = 0, sz = 0;
+  let speed = 0, sx = 0, sz = 0, first = 0;
   hitA.amount.fill(0); hitB.amount.fill(0);
   const ta = (A.touched ??= new Float64Array(N_BOX).fill(-1e9)), tb = (B.touched ??= new Float64Array(N_BOX).fill(-1e9));
   for (let k = 0; k < n; k++) {
     const { i, j, hit } = touching[k];
     ta[i] = tb[j] = stepNo;
     const closing = Math.max(0, -(rvx * hit.nx + rvz * hit.nz));
-    if (closing > speed) { speed = closing; sx = hit.nx; sz = hit.nz; }
+    if (closing > speed) { speed = closing; sx = hit.nx; sz = hit.nz; first = k; }
     const h = damageHit(closing);
     record(hitA, i, h * (isSolid(bb[j].def) ? 1 : CONTACT.fragileHurt), hit);
     record(hitB, j, h * (isSolid(ba[i].def) ? 1 : CONTACT.fragileHurt), hit);
@@ -985,7 +986,10 @@ function collidePair(A, B, dt) {
   if (fresh) { rec.peakA.fill(0); rec.peakB.fill(0); }
   damageParts(A, ba, hitA, rec.peakA);
   damageParts(B, bb, hitB, rec.peakB);
-  return fresh && speed > 1 ? speed : 0;
+  if (!(fresh && speed > 1)) return 0;
+  const pair = [ba[touching[first].i].def.name, bb[touching[first].j].def.name].sort().join('>');
+  CONTACTS.parts.set(pair, (CONTACTS.parts.get(pair) ?? 0) + 1);
+  return speed;
 }
 
 /** Keep a box's hardest hit this step, and where it landed. */
