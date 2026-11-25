@@ -17,7 +17,7 @@ globalThis.Path2D ??= class { constructor() {} addPath() {} moveTo() {} lineTo()
 const { TRACKS } = await import('../src/tracks/index.js');
 const { TrackPath, boxSegment, WALL_THICKNESS } = await import('../src/trackPath.js');
 const { CarPhysics } = await import('../src/physics.js');
-const { CAR_DIMS } = await import('../src/car.js');
+const { carBoxes } = await import('../src/carShape.js');
 
 let failures = 0;
 const check = (ok, label, detail = '') => {
@@ -26,37 +26,6 @@ const check = (ok, label, detail = '') => {
 };
 const near = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol;
 
-// ---------------------------------------------------------------------------------------
-// The car's boxes in world space. carShape.js (#15) provides carBoxes(); until it lands,
-// a local copy of the box table from #15 stands in for it.
-const D = CAR_DIMS;
-const LOCAL_BOXES = [
-  { name: 'body', kind: 'solid', x0: -2.5, x1: 1.2, y0: -0.85, y1: 0.85, h0: 0, h1: 0.95 },
-  { name: 'nose', kind: 'solid', x0: 1.2, x1: 2.3, y0: -0.2, y1: 0.2, h0: 0.1, h1: 0.6 },
-  { name: 'front wing L', kind: 'fragile', x0: 2.3, x1: 2.98, y0: 0.35, y1: 0.98, h0: 0.05, h1: 0.3 },
-  { name: 'front wing R', kind: 'fragile', x0: 2.3, x1: 2.98, y0: -0.98, y1: -0.35, h0: 0.05, h1: 0.3 },
-  { name: 'rear wing', kind: 'fragile', x0: -2.74, x1: -2.45, y0: -0.51, y1: 0.51, h0: 0.6, h1: 0.95 },
-  ...[
-    ['wheel FL', D.frontAxle, 1, D.frontRadius, D.frontWidth],
-    ['wheel FR', D.frontAxle, -1, D.frontRadius, D.frontWidth],
-    ['wheel RL', D.rearAxle, 1, D.rearRadius, D.rearWidth],
-    ['wheel RR', D.rearAxle, -1, D.rearRadius, D.rearWidth],
-  ].map(([name, x, side, r, w]) => ({
-    name, kind: 'wheel', x0: x - r, x1: x + r, y0: side * D.track - w / 2, y1: side * D.track + w / 2, h0: 0, h1: 2 * r,
-  })),
-];
-const shape = await import('../src/carShape.js').catch(() => null);
-const carBoxes = shape?.carBoxes ?? ((car) => {
-  const fx = Math.sin(car.yaw), fz = Math.cos(car.yaw), lx = fz, lz = -fx;
-  return LOCAL_BOXES.map((def) => {
-    const mx = (def.x0 + def.x1) / 2, my = (def.y0 + def.y1) / 2;
-    return {
-      cx: car.position.x + fx * mx + lx * my, cz: car.position.z + fz * mx + lz * my,
-      fx, fz, hx: (def.x1 - def.x0) / 2, hy: (def.y1 - def.y0) / 2,
-      h0: (car.height ?? 0) + def.h0, h1: (car.height ?? 0) + def.h1, def,
-    };
-  });
-});
 const box = (cx, cz, yaw, hx, hy) => ({ cx, cz, fx: Math.sin(yaw), fz: Math.cos(yaw), hx, hy });
 
 // ---------------------------------------------------------------------------------------
@@ -134,11 +103,12 @@ console.log('TrackPath.wallContactBox (Test Oval, outer wall)');
 // (Recorded on fork/main at 04e1219. The 0.6 m pit wall fits between the front wing
 // halves, 0.7 m apart, so head-on at its end only the nose reaches it.)
 const BASELINE = {
-  head30: { pen: 1.23, part: 'front wing L' },
-  swipe: { pen: 0.55, part: 'front wing L' },
-  reverse: { pen: 1.64, part: 'rear wing' },
+  head30: { pen: 1.23, part: 'wingL' },
+  swipe: { pen: 0.55, part: 'wingL' },
+  reverse: { pen: 1.64, part: 'rearWing' },
   nose: { pen: 0.5, part: 'nose' },
-  noseOff: { pen: 0.58, part: 'front wing L' },
+  noseOff: { pen: 0.58, part: 'wingL' },
+  spin: { pen: 1.99, part: 'wingR' },
 };
 const PEN_TOL = 0.05; // m a box may end a step inside a wall
 const dt = 1 / 120;
@@ -168,12 +138,16 @@ function crossesWall(x0, z0, x1, z1) {
   return false;
 }
 
-/** Launch a car at (x, z) facing (hx, hz) at `speed` (negative = reversing) and coast it. */
-function run({ x, z, hx, hz, speed, time = 2 }) {
+/**
+ * Launch a car at (x, z) facing (hx, hz) at `speed` (negative = reversing) and coast it.
+ * slide: extra velocity [x, z] (a sideways slide); yawRate: spinning (rad/s, + = to the left).
+ */
+function run({ x, z, hx, hz, speed, slide = [0, 0], yawRate = 0, time = 2 }) {
   const car = new CarPhysics(P, { x, z, yaw: yawOf(hx, hz), y: 0 });
-  car.vel.x = hx * speed;
-  car.vel.z = hz * speed;
+  car.vel.x = hx * speed + slide[0];
+  car.vel.z = hz * speed + slide[1];
   car.speed = speed;
+  car.yawRate = yawRate;
   for (const w of car.wheels) w.omega = speed / w.r;
   let worst = { pen: 0, part: '' }, through = false;
   for (let i = 0; i < time / dt; i++) {
@@ -218,6 +192,11 @@ const SCENARIOS = [
     id: 'noseOff', label: 'pit-wall end, 0.7 m off its line (wing tip), 20 m/s',
     x: nose.p[0] - d[0] * 9 - d[1] * 0.7, z: nose.p[1] - d[1] * 9 + d[0] * 0.7, hx: d[0], hz: d[1], speed: 20,
   },
+  {
+    // the nose and wings sweep an arc: each box is swept from its own place a step ago
+    id: 'spin', label: 'spinning at 6 rad/s, sliding into the wall at 12 m/s',
+    ...fromWall(WALL_THICKNESS / 2 + 3 + 3, 0, ...t), speed: 20, slide: [-n[0] * 12, -n[1] * 12], yawRate: 6,
+  },
 ];
 
 console.log(`wall scenarios (Test Oval; pen = deepest any box ends a step inside a wall, target ≤ ${PEN_TOL} m)`);
@@ -227,7 +206,7 @@ for (const s of SCENARIOS) {
   const base = BASELINE[s.id];
   const hit = res.car.impact > 0;
   const ok = res.pen <= PEN_TOL && !res.through && hit;
-  check(ok, s.label.padEnd(52),
+  check(ok, s.label.padEnd(54),
     `circle ${fmt(base.pen, base.part)} | now pen ${fmt(res.pen, res.part)}${res.through ? ', WENT THROUGH' : ''}${hit ? `, hit ${res.car.impact.toFixed(1)} m/s` : ', NO HIT'}`);
 }
 

@@ -25,9 +25,10 @@
 // hurt power unit / gearbox loses power; bent suspension knocks a wheel out of line
 // (toe-out pulls the car, camber costs grip); damaged tyres grip less and drag.
 import { CAR_DIMS, WHEELS } from './car.js';
-import { KERB_WIDTH, WALL_THICKNESS, PIT } from './trackPath.js';
+import { KERB_WIDTH, PIT } from './trackPath.js';
 import { SURFACES, TYRE, COMPOUNDS, tyreForce, tempGrip, wearGrip, peakForce, rollingCoef } from './tyres.js';
 import { CarDamage, DAMAGE } from './damage.js';
+import { carBoxes } from './carShape.js';
 
 const G = 9.81;
 const RHO = 1.225; // air density, kg/m^3
@@ -251,7 +252,7 @@ export class CarPhysics {
     this.absActive = false;
     for (let k = 0; k < n; k++) this.substep(h);
 
-    this.collideWalls();
+    this.collideWalls(yaw0);
     this.updateTyreState(dt);
 
     // --- derived values for HUD / visuals ---
@@ -567,18 +568,33 @@ export class CarPhysics {
     }
   }
 
-  /** Swept circle against the barrier segments (track walls, pit wall, pit lane walls). */
-  collideWalls() {
+  /**
+   * The car's collision boxes (carShape.js) against the barrier segments (track walls, pit
+   * wall, pit lane walls). Each box is swept from where it was at the start of the step
+   * (prevPos, heading yaw0), so a fast car can't skip through a wall in one step and the
+   * nose and wings are swept along their own arc while the car turns. The deepest contact
+   * of any box pushes the car out and bounces it.
+   */
+  collideWalls(yaw0 = this.yaw) {
     const T = this.track;
     const p = this.position;
-    const r = 1.1 + WALL_THICKNESS / 2; // half car width-ish + half the wall
+    const pose = (this.prevPose ??= { position: null, yaw: 0, height: 0 });
+    pose.position = this.prevPos;
+    pose.yaw = yaw0;
+    pose.height = this.height;
+    const prev = carBoxes(pose, (this.prevBoxes ??= []));
     let hit = false;
     for (let iter = 0; iter < 3; iter++) {
-      const c = T.wallContact(p.x, p.z, this.prevPos.x, this.prevPos.z, r, this.height);
-      if (!c) break;
-      hit = true;
-      this.wallImpact(-c.nx, -c.nz, c.pen); // normal pointing into the wall
-      // later contacts sweep from where this one left the car
+      const boxes = carBoxes(this);
+      let best = null;
+      for (let k = 0; k < boxes.length; k++) {
+        const b = boxes[k], from = hit ? b : prev[k];
+        const c = T.wallContactBox(b, from.cx, from.cz, this.height);
+        if (c && (!best || c.depth > best.depth)) best = c;
+      }
+      if (!best) break;
+      hit = true; // later contacts sweep from where this one left the car
+      this.wallImpact(best.nx, best.nz, best.depth); // normal pointing into the wall
       this.prevPos.x = p.x;
       this.prevPos.z = p.z;
     }
