@@ -2,6 +2,7 @@
 // definition, using the centreline maths in trackPath.js. Everything follows the
 // track's height profile (TrackPath.py); the road is level across its width.
 import * as THREE from 'three/webgpu';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { boxGeometry, ribbonGeometry, planeXZ } from './geometry.js';
 import {
   asphaltMaterial, kerbMaterial, grassMaterial, checkerMaterial, simpleMaterial, layered,
@@ -468,9 +469,22 @@ export class Track {
     // uv = (metres along, lateral offset); attribute grass = (mowing direction, stripes, mown)
     // (kink, on the main track: where a banked road's tilt ends, so the verge follows it there
     // and stays level beyond instead of cutting a straight line through the road)
-    const side = (count, at, edge, outer, runoff = 1, kink = null) => {
-      const stages = [[() => 0, edge, 0], [edge, outer, -TERRAIN_DROP - 0.4]];
+    // (step: the flat part is cut into strips about this wide (m), so a height limit that
+    // at(k).p applies per vertex holds across it, not just at its two edges)
+    const side = (count, at, edge, outer, runoff = 1, kink = null, step = 0) => {
+      let stages = [[() => 0, edge, 0], [edge, outer, -TERRAIN_DROP - 0.4]];
       if (kink) stages.splice(0, 1, [() => 0, kink, 0], [kink, edge, 0]);
+      if (step > 0) {
+        stages = stages.flatMap(([from, to, drop]) => {
+          if (drop !== 0) return [[from, to, drop]];
+          let wide = 0;
+          for (let k = 0; k < count; k++) wide = Math.max(wide, Math.abs(to(k) - from(k)));
+          const n = Math.max(1, Math.ceil(wide / step));
+          const cut = (m) => (k) => from(k) + ((to(k) - from(k)) * m) / n;
+          return Array.from({ length: n }, (_, m) => [cut(m), m === n - 1 ? to : cut(m + 1), 0]);
+        });
+      }
+      const parts = [];
       for (const [from, to, drop] of stages) {
         const geo = ribbonGeometry(count, (k) => {
           const c = at(k), a = from(k), b = to(k);
@@ -482,8 +496,10 @@ export class Track {
           grass.set([t[0], t[1], runoff, 1, t[0], t[1], runoff, 1], k * 8);
         }
         geo.setAttribute('grass', new THREE.BufferAttribute(grass, 4));
-        geos.push(geo);
+        parts.push(geo);
       }
+      geos.push(parts.length > 1 ? mergeGeometries(parts) : parts[0]);
+      for (const geo of parts.length > 1 ? parts : []) geo.dispose();
     };
     const insideCap = (k, sgn) => (sgn * k > 0 ? 0.9 / Math.abs(k) : Infinity);
 
@@ -505,9 +521,24 @@ export class Track {
     if (pit) {
       const kp = new Float64Array(pit.N); // lane curvature (+ = turning left)
       for (let j = 1; j < pit.N - 1; j++) kp[j] = angleDiff(pit.heading[j + 1], pit.heading[j - 1]) / (2 * pit.ds);
+      // The lane's grass is level with the lane, but on its way out it runs under the
+      // track's asphalt and verges (at the merges, and beside the lane where the track's
+      // run-off reaches past the pit wall). There the track's height differs from the
+      // lane's by a few cm (grade, crossfall), enough for flat grass to poke up through
+      // the road in long jagged slivers, or z-fight with it from a distant camera: keep it
+      // a little under the track's surface wherever the track's verges reach.
+      const UNDER = 0.05;
       const laneAt = (j) => {
         const lx = pit.leftX(j), lz = pit.leftZ(j), h = pit.py[j];
-        return { n: slopeNormal(pit.grade[j], pit.tx[j], pit.tz[j]), t: [pit.tx[j], pit.tz[j]], s: j * pit.ds, p: (lat, dy) => [pit.px[j] + lx * lat, h + dy, pit.pz[j] + lz * lat] };
+        const p = (lat, dy) => {
+          const x = pit.px[j] + lx * lat, z = pit.pz[j] + lz * lat;
+          let y = h + dy;
+          const q = P.query(x, z, pit.mainI[j], 30);
+          const reach = q.lateral > 0 ? P.wallL[q.i] + P.tyreL[q.i] : P.wallR[q.i] + P.tyreR[q.i];
+          if (Math.abs(q.lateral) <= reach + VERGE) y = Math.min(y, P.roadY(q.i, q.lateral) - UNDER);
+          return [x, y, z];
+        };
+        return { n: slopeNormal(pit.grade[j], pit.tx[j], pit.tz[j]), t: [pit.tx[j], pit.tz[j]], s: j * pit.ds, p };
       };
       for (const sgn of [1, -1]) {
         // the garage side reaches back under the garage block
@@ -515,7 +546,7 @@ export class Track {
         const cap = (j) => insideCap(kp[j], sgn);
         const edge = (j) => sgn * Math.max(PIT.hw + 0.5, Math.min(width(j), cap(j)));
         const outer = (j) => sgn * Math.max(Math.abs(edge(j)) + 0.5, Math.min(width(j) + SKIRT, cap(j)));
-        side(pit.N, laneAt, edge, outer, this.def.scenery?.paved ? 0 : 1);
+        side(pit.N, laneAt, edge, outer, this.def.scenery?.paved ? 0 : 1, null, 1.5);
       }
     }
     return geos;

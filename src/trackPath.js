@@ -1107,9 +1107,11 @@ export class PitPath {
       this.mainI[j] = main.wrap(Math.round((s % L) / main.ds));
       prev = s;
     }
-    // the lane is level with the bit of track beside it
+    // the lane is level with the bit of track beside it: the road's height at the lane's
+    // lateral offset (the edge of a tilted road once clear of it), which is also where the
+    // physics puts a car in the lane (heightAt(s, lateral))
     this.py = new Float64Array(N);
-    for (let j = 0; j < N; j++) this.py[j] = main.heightAt(this.mainS[j]);
+    for (let j = 0; j < N; j++) this.py[j] = main.heightAt(this.mainS[j], this.mainLat[j]);
     this.grade = new Float64Array(N);
     for (let j = 0; j < N; j++) this.grade[j] = (this.py[Math.min(N - 1, j + 1)] - this.py[Math.max(0, j - 1)]) / (this.ds * (j > 0 && j < N - 1 ? 2 : 1));
     this.side = sideSum >= 0 ? 1 : -1; // +1: the lane is on the driver's left of the track
