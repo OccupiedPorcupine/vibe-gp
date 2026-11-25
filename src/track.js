@@ -177,6 +177,7 @@ export class Track {
     const city = this.def.city ? buildCityscape(P, this.field, this.stands, g, this.def)
       : osmBuildings.length ? buildCityscape(P, this.field, this.stands, g, { ...this.def, city: { buildings: osmBuildings, walls: [] } })
         : null;
+    this.city = city;
     if (this.def.city) buildCityWalls(P, this.field, g, this.def);
     yield [0.78, 'Planting trees'];
     buildTrees(P, this.field, this.stands, g, this.def.id, this.def.scenery, city?.occupied, this.land);
@@ -667,20 +668,30 @@ export class Track {
   }
 
   /** Trackside TV camera spots every ~160 m, on the outside of the bend, between the fence and any stand. */
+  /**
+   * Fixed trackside TV cameras every ~160 m, on the outside of the corner: 4.5 m behind the
+   * barrier and 7 m up. In a tunnel they hang inside it, over the barrier (in front of the
+   * lining) under the ceiling (above it they would film the roof); where a building stands on that spot they
+   * come in to just behind the barrier, which buildings keep clear of (from inside or on
+   * top of the building they would film its walls or roof).
+   */
   placeTvCams() {
     const P = this.path;
     const cams = [];
     const step = Math.max(1, Math.round(160 / P.ds));
+    const tunnel = (i) => (this.def.tunnels ?? []).some(([s0, s1]) => i * P.ds >= s0 && i * P.ds <= s1);
     for (let i = 0; i < P.N; i += step) {
       const k = P.curvature[i];
       const side = k > 0 ? -1 : 1; // outside of the corner
       const wall = side > 0 ? P.wallL[i] + P.tyreL[i] : P.wallR[i] + P.tyreR[i];
-      const lat = side * (wall + 4.5);
-      cams.push({
-        x: P.px[i] + P.leftX(i) * lat,
-        z: P.pz[i] + P.leftZ(i) * lat,
-        y: P.py[i] + 7,
-      });
+      const at = (lat, up) => ({ x: P.px[i] + P.leftX(i) * side * lat, z: P.pz[i] + P.leftZ(i) * side * lat, y: P.py[i] + up });
+      if (tunnel(i)) {
+        cams.push(at(wall + 0.1, 5.2));
+        continue;
+      }
+      const cam = at(wall + 4.5, 7);
+      const roof = this.city?.roofAt(cam.x, cam.z, 2);
+      cams.push(roof != null && roof > cam.y - 4 ? at(wall + 0.5, 7) : cam);
     }
     return cams;
   }
