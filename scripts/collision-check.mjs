@@ -215,6 +215,50 @@ for (const s of SCENARIOS) {
     `circle ${fmt(base.pen, base.part)} | now pen ${fmt(res.pen, res.part)}${res.through ? ', WENT THROUGH' : ''}${hit ? `, hit ${res.car.impact.toFixed(1)} m/s` : ', NO HIT'}`);
 }
 
+// A part that broke off isn't there to hit the wall: nose-first at 15°, left side leading,
+// with the left front wing on and with it broken off. Records which boxes collideWalls finds
+// touching a wall, and the step of the first contact.
+{
+  const a = Math.PI / 12;
+  const into15 = [t[0] * Math.cos(a) - n[0] * Math.sin(a), t[1] * Math.cos(a) - n[1] * Math.sin(a)];
+  const start = fromWall(4, -4 / Math.tan(a), ...into15);
+  const crash = (breakWing) => {
+    const car = new CarPhysics(P, { x: start.x, z: start.z, yaw: yawOf(...into15), y: 0 });
+    if (breakWing) car.damage.wing[0] = 1;
+    car.vel.x = into15[0] * 25;
+    car.vel.z = into15[1] * 25;
+    car.speed = 25;
+    for (const w of car.wheels) w.omega = 25 / w.r;
+    const parts = new Set();
+    let first = null, firstStep = -1, rec = false;
+    const orig = P.wallContactBox;
+    P.wallContactBox = function (b, ...rest) {
+      const c = orig.call(this, b, ...rest);
+      if (c && rec) {
+        parts.add(b.def.name);
+        if (firstStep < 0 && (first === null || c.depth > first.depth)) first = { name: b.def.name, depth: c.depth };
+      }
+      return c;
+    };
+    try {
+      for (let i = 0; i < 1.5 / dt; i++) {
+        rec = true; // only the queries collideWalls makes inside step()
+        car.step({ throttle: 0, brake: 0, steer: 0 }, dt);
+        rec = false;
+        if (first && firstStep < 0) firstStep = i;
+      }
+    } finally {
+      P.wallContactBox = orig;
+    }
+    return { car, parts, first: first?.name, firstStep };
+  };
+  const intact = crash(false), broken = crash(true);
+  const show = (r) => `first ${r.first ?? 'none'} at step ${r.firstStep}, touched ${[...r.parts].join(' ') || 'nothing'}`;
+  check(intact.first === 'wingL', 'left wing on, 15° nose-first at 25 m/s: the wing hits first', show(intact));
+  check(broken.car.damage.broken(0) && !broken.parts.has('wingL') && broken.parts.size > 0 && broken.car.impact > 0 && broken.firstStep > intact.firstStep,
+    'left wing broken off: the wall meets a part still on the car', show(broken));
+}
+
 // ---------------------------------------------------------------------------------------
 // Car-to-car scenarios (#16): two cars on Suzuka's start straight, stepped at 120 Hz with
 // collideCars() after each step as in a race. Each checks which parts took damage and how

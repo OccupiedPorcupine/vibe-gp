@@ -10,6 +10,7 @@
 //   boxOverlap(a, b)    separating-axis test of two world boxes: depth, normal and contact
 //                       point, or null
 //   boxCorners(b, out?) a world box's four plan-view corners
+//   boxGone(car, def)   the part a box stands for has broken off the car
 //
 // Box positions come from the damage points (PARTS in damage.js) and the wheel layout
 // (WHEELS in car.js), so each part's position is defined in one place. The heights are
@@ -74,6 +75,15 @@ export const BOXES = [
     x0: w.x - w.r, x1: w.x + w.r, y0: w.y - w.w / 2, y1: w.y + w.w / 2, h0: 0, h1: 2 * w.r,
   })),
 ];
+
+/**
+ * True when the part a box stands for has broken off the car (a front wing half or the
+ * rear wing), so it is no longer there to touch walls or other cars.
+ */
+export function boxGone(car, def) {
+  if (def.part === 'wing') return !!car.damage?.broken(def.i);
+  return def.part === 'rearWing' && !!car.damage?.rearWingBroken;
+}
 
 /** One box around all of BOXES: if two cars' hulls don't overlap, none of their boxes do. */
 export const HULL = BOXES.reduce((h, d) => ({
