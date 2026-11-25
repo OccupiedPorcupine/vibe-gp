@@ -989,7 +989,8 @@ export class Car {
     // a crest doesn't tilt as the road falls away under it
     const airborne = !!state.airborne;
     const touchdown = this.wasAirborne && !airborne;
-    if (touchdown) LAST_AIR.copy(this.group.quaternion).multiply(this.tilt.quaternion); // the pose it flew in
+    // the pose it flew in: the whole car, the body's few degrees on its springs included
+    if (touchdown) LAST_AIR.copy(this.group.quaternion).multiply(this.tilt.quaternion).multiply(this.body.quaternion);
     this.wasAirborne = airborne;
     this.group.position.set(state.position.x, (state.height ?? 0) + (state.air ?? 0) + lift, state.position.z);
     if (airborne) this.group.rotation.set(0, state.yaw, 0, 'YXZ');
@@ -1014,7 +1015,7 @@ export class Car {
     // touching down, pitch and roll go back to the road's frame, which can differ from the
     // pose the car flew in by however badly it landed: ease the difference out over LANDING_BLEND
     if (touchdown) {
-      const now = TARGET.copy(this.group.quaternion).multiply(this.tilt.quaternion);
+      const now = TARGET.copy(this.group.quaternion).multiply(this.tilt.quaternion).multiply(this.body.quaternion);
       this.landing = { from: new THREE.Quaternion().copy(LAST_AIR).multiply(now.invert()), t: 0 };
     } else if (airborne) this.landing = null;
     if (this.landing) {
