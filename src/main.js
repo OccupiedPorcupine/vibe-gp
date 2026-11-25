@@ -17,6 +17,7 @@ import { LoadingBar, nextFrame } from './loading.js';
 import { CARDS } from './tracks/cards.js';
 import { TEAMS, teamById, teamLogoCanvas, teamGarage } from './teams.js';
 import { BoxMarker } from './boxMarker.js';
+import { ShapeOverlay } from './shapeOverlay.js';
 import { PitStop } from './pitStop.js';
 import { PitCrews } from './pitCrew.js';
 import { COMPOUND_LIST } from './tyres.js';
@@ -262,6 +263,7 @@ async function start() {
   const pitStop = new PitStop();
   const boxMarker = new BoxMarker(); // big green arrow in the pit lane beside the player's box
   scene.add(boxMarker.group);
+  const shapes = new ShapeOverlay(scene); // the cars' collision boxes (key O), off to start with
 
   let track = null;
   let physics = null;
@@ -721,6 +723,7 @@ async function start() {
       }
       COMPOUND_LIST.forEach((c, i) => input.hit(`Digit${i + 1}`) && pickCompound(c));
       if (input.hit('KeyF')) toggleWing();
+      if (input.hit('KeyO')) timer.flash = { text: `COLLISION BOXES ${shapes.toggle() ? 'ON' : 'OFF'}`, until: timer.time + 1.5 };
       if (input.hit('KeyM')) {
         if (!race) timer.flash = { text: 'DIRECTOR MODE NEEDS AI OPPONENTS', until: timer.time + 2, warn: true };
         else {
@@ -796,12 +799,13 @@ async function start() {
     floods.update(camera.position, track?.floodStrength);
 
     boxMarker.update(dt, pitStop, !menu.visible && !driving);
+    if (shapes.on) shapes.update(race ? race.entries.map((e) => e.physics) : [physics]);
     const label = watching ? `${camMode} · ${watching.team.name}${driving ? ' · YOU' : ''}` : camMode;
     hud.update(viewed, timer, label, driving ? watching.pitStop : watching ? null : pitStop);
     hud.updateRace(now / 1000);
     sound.update(viewed, { camera, mode: camMode, racing: !menu.visible && !paused });
     if (import.meta.env.DEV) {
-      window.__game = { rig, freecam, monitor, race, physics, timer, startLights, track, pitStop, crews, loadTrack, TRACKS, menu, car, setTeam, TEAMS, scene, sun, floods, renderer, sound };
+      window.__game = { shapes, rig, freecam, monitor, race, physics, timer, startLights, track, pitStop, crews, loadTrack, TRACKS, menu, car, setTeam, TEAMS, scene, sun, floods, renderer, sound };
       // automated screenshots can pin the camera: window.__fixedCam = { x, y, z, tx, ty, tz }
       const fc = window.__fixedCam;
       if (fc) {
