@@ -31,6 +31,7 @@ const HZ = 30;
 const KINDS = {
   retire: { label: 'RETIRED', weight: 4 },
   crash: { label: 'CRASH', weight: 3 },
+  air: { label: 'AIRBORNE', weight: 3 },
   contact: { label: 'CONTACT', weight: 3 },
   spin: { label: 'SPIN', weight: 2 },
   off: { label: 'OFF', weight: 1 },
@@ -53,7 +54,7 @@ export function fitQuad(quad, r, camera) {
  * The last BUFFER seconds of every car's pose. Per sample and car: group position (3) and
  * quaternion (4), body pitch, roll and heave (3), front wheel steer (1).
  */
-const F = 11;
+const F = 13; // floats per car per sample (see record)
 const SCRATCH_Q = new THREE.Quaternion();
 class PoseRecorder {
   constructor() {
@@ -85,6 +86,7 @@ class PoseRecorder {
       b[o + 3] = q.x; b[o + 4] = q.y; b[o + 5] = q.z; b[o + 6] = q.w;
       b[o + 7] = c.body.rotation.x; b[o + 8] = c.body.rotation.z; b[o + 9] = c.body.position.y;
       b[o + 10] = c.wheels[0].steer.rotation.y;
+      b[o + 11] = c.tiltPitch ?? 0; b[o + 12] = c.tiltRoll ?? 0; // turned over in the air
     }
     this.head = (i + 1) % this.n;
     this.count = Math.min(this.count + 1, this.n);
@@ -124,6 +126,8 @@ class PoseRecorder {
     out.roll = l(8);
     out.heave = l(9);
     out.steer = l(10);
+    out.tiltPitch = l(11);
+    out.tiltRoll = l(12);
     return out;
   }
 }
@@ -213,10 +217,10 @@ export class IncidentMonitor {
     }
     // live: stay with it while the car is still in trouble, then rewind and replay it
     const p = s.entry.physics;
-    const trouble = this.slip(p) > 0.5 || p.wallHit > 0.05 || Math.abs(p.yawRate) > 1.5;
+    const trouble = this.slip(p) > 0.5 || p.wallHit > 0.05 || Math.abs(p.yawRate) > 1.5 || p.airborne;
     s.calm = trouble ? 0 : s.calm + dt;
     if ((s.age > SHOW && s.calm > 1.5) || s.age > MAX_LIVE || s.entry.retired) this.startReplay(s, Math.min(this.time, s.at + REPLAY_LEN - BEFORE));
-    else this.aim(p.position.x, p.height ?? 0, p.position.z, s, dt);
+    else this.aim(p.position.x, (p.height ?? 0) + (p.air ?? 0), p.position.z, s, dt);
   }
 
   /** The monitor's camera: at a fixed bearing and height from (x, y, z), easing after it. */
@@ -255,6 +259,7 @@ export class IncidentMonitor {
       hit = p.impact; // car-to-car (and wall) hits since last time
       p.impact = 0;
     }
+    if (p.airborne) return 'air';
     if (p.wallHit > 0.35) return 'crash';
     if (hit > 6) return 'contact';
     const v = Math.abs(p.speed);
@@ -338,7 +343,7 @@ export class IncidentMonitor {
       for (const c of cars) {
         const p = this.rec.pose(c, found, this._pose);
         const g = c.group, b = c.body;
-        saved.push([c, g.position.clone(), g.quaternion.clone(), b.rotation.x, b.rotation.z, b.position.y, c.wheels[0].steer.rotation.y, c.wheels[1].steer.rotation.y, g.visible, c.lodLevel]);
+        saved.push([c, g.position.clone(), g.quaternion.clone(), b.rotation.x, b.rotation.z, b.position.y, c.wheels[0].steer.rotation.y, c.wheels[1].steer.rotation.y, g.visible, c.lodLevel, c.tiltPitch ?? 0, c.tiltRoll ?? 0]);
         if (!p) {
           g.visible = false; // not in the race back then
           continue;
@@ -349,6 +354,7 @@ export class IncidentMonitor {
         b.rotation.z = p.roll;
         b.position.y = p.heave;
         c.wheels[0].steer.rotation.y = c.wheels[1].steer.rotation.y = p.steer;
+        c.setTilt?.(p.tiltPitch, p.tiltRoll);
         if (c.lodLevel !== undefined) c.setLod(0);
         if (c === this.carOf(s.entry)) this.aim(p.pos.x, p.pos.y, p.pos.z, s, dt * SLOW);
       }
@@ -357,7 +363,8 @@ export class IncidentMonitor {
     renderer.setRenderTarget(this.target);
     renderer.render(scene, this.cam);
     renderer.setRenderTarget(prev);
-    for (const [c, pos, quat, pitch, roll, heave, s0, s1, vis, lod] of saved) {
+    for (const [c, pos, quat, pitch, roll, heave, s0, s1, vis, lod, tp, tr] of saved) {
+      c.setTilt?.(tp, tr);
       c.group.position.copy(pos);
       c.group.quaternion.copy(quat);
       c.body.rotation.x = pitch;

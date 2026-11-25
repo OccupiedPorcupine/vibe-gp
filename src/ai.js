@@ -363,6 +363,19 @@ export class AIDriver {
     const P = car.track;
     const L = P.length;
     if (sinceGreen < this.reaction) return { steer: 0, throttle: 0, brake: 1 };
+    // in the air nothing the driver does reaches the road: off the pedals, wheel straight,
+    // and no plans made or timers run (stuck, mistakes, respawns, pit stops) until it lands.
+    // Then it carries on as after a spin: whatever it was in the middle of is over, and the
+    // recovery below gets it going again if it landed backwards or stopped
+    if (car.airborne) {
+      this.flew = true;
+      return { steer: 0, throttle: 0, brake: 0 };
+    }
+    if (this.flew) {
+      this.flew = false;
+      this.mistake = null;
+      this.brakeNow = false;
+    }
     // a car too badly damaged to race (it can't pit): with resets it's put back on the line
     // repaired; in no-resets mode it pulls over and retires
     if (this.resets && wrecked(car.damage)) {

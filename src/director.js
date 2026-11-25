@@ -60,6 +60,8 @@ export class Director {
     this.captionAt = -1;
     this.rects = null;
     this._v = new THREE.Vector3();
+    this._up = new THREE.Vector3(); // scratch: an onboard camera's up, in the air
+    this._m = new THREE.Matrix4();
     addEventListener('resize', () => (this.rects = null));
   }
 
@@ -120,10 +122,15 @@ export class Director {
     const prev = renderer.getRenderTarget();
     for (let k = 0; k < Math.min(PER_FRAME, live.length); k++) {
       const t = live[(this.turn + k) % live.length];
-      const body = carOf(t.entry).body;
+      const car = carOf(t.entry), body = car.body;
       body.updateWorldMatrix(true, false);
       t.cam.position.copy(body.localToWorld(this._v.copy(TCAM)));
-      t.cam.lookAt(body.localToWorld(this._v.copy(AHEAD)));
+      const ahead = body.localToWorld(this._v.copy(AHEAD));
+      if (car.tiltPitch || car.tiltRoll) {
+        // turning over in the air: the onboard picture's horizon tilts with the car
+        this._up.set(0, 1, 0).transformDirection(car.tilt.matrixWorld);
+        t.cam.quaternion.setFromRotationMatrix(this._m.lookAt(t.cam.position, ahead, this._up));
+      } else t.cam.lookAt(ahead);
       renderer.setRenderTarget(t.target);
       renderer.render(scene, t.cam);
       t.drawn = true;
