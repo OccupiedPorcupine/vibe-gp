@@ -6,10 +6,11 @@
 // Colours: solid parts cyan, fragile ones (wings) orange, wheels yellow; a box that
 // touched another car turns red for half a second (and while it overlaps one).
 import * as THREE from 'three/webgpu';
-import { BOXES, carBoxes, boxCorners, boxOverlap } from './carShape.js';
+import { BOXES, carBoxes, boxCorners, boxOverlap, boxGone } from './carShape.js';
 import { CONTACTS } from './ai.js';
 
 const HOLD = 60; // steps (0.5 s) a touched box stays red
+const gone = boxGone; // a wing that has broken off isn't on the car: not drawn
 
 const COLOUR = { solid: new THREE.Color(0x22e0ff), fragile: new THREE.Color(0xff9a1f), wheel: new THREE.Color(0xffe23a) };
 const HIT = new THREE.Color(0xff2a2a);
@@ -52,8 +53,9 @@ export class ShapeOverlay {
         if (dx * dx + dz * dz > 49) continue;
         const ba = carBoxes(A), bb = carBoxes(B);
         for (let i = 0; i < n; i++) {
+          if (gone(A, ba[i].def)) continue;
           for (let j = 0; j < n; j++) {
-            if (boxOverlap(ba[i], bb[j])) hit[a * n + i] = hit[b * n + j] = true;
+            if (!gone(B, bb[j].def) && boxOverlap(ba[i], bb[j])) hit[a * n + i] = hit[b * n + j] = true;
           }
         }
       }
@@ -64,6 +66,7 @@ export class ShapeOverlay {
       const boxes = carBoxes(cars[a]);
       for (let i = 0; i < n; i++) {
         const box = boxes[i];
+        if (gone(cars[a], box.def)) continue;
         boxCorners(box, c);
         const touched = CONTACTS.step - (cars[a].touched?.[i] ?? -1e9) < HOLD;
         const rgb = hit[a * n + i] || touched ? HIT : COLOUR[box.def.kind];
