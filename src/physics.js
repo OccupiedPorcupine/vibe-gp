@@ -109,7 +109,9 @@ const L = A_FRONT + B_REAR;
 // downforce fades as the nose rises against the airflow and turns to lift past liftAngle,
 // and the floor's share of it (ground effect) fades with height. Pitch and roll rates damp
 // slowly, and at speed the airflow turns the nose towards the flight path, like an arrow's
-// fletching. Pitch and roll stop at the cap, which marks the car wrecked.
+// fletching, and the heading towards the direction of travel (a car kicked into a spin
+// turns only part of the way round before it lands). Pitch and roll stop at the cap, which
+// marks the car wrecked.
 // The ground: points of the car (GROUND in carShape.js: the tyres, the diffuser's tail, the
 // front wing's feet) that come down on the road get a vertical impulse, with the car's mass
 // and its pitch and roll inertia. One end or side on the road while the car turns away from
@@ -122,6 +124,8 @@ export const AIR = {
   floorShare: 0.55, // share of the downforce the floor makes from ground effect
   groundEffect: 0.3, // m: the floor's downforce halves this high
   pitchStiff: 0.006, // rad/s² of nose turned to the flight path, per Pa of dynamic pressure per rad
+  yawStiff: 0.0175, // rad/s² of heading turned to the direction of travel, per Pa per rad of sideslip
+  yawDamp: 0.07, // 1/s of yaw-rate decay per m/s of speed (the sidepods, fin and rear wing)
   rateDamp: 1.5, // 1/s: pitch and roll rates decay this fast
   cap: 1.05, // rad (60°): pitch and roll stop here and the car is wrecked
   bounceSpeed: 4, // m/s into the road: a landing harder than this rebounds ...
@@ -529,9 +533,12 @@ export class CarPhysics {
     const k = (0.5 * RHO * v * P.CdA * da.drag) / m; // drag / (m v)
     const ex = -k * v * Math.sign(vx); // felt along the car, for the load transfer on landing
 
-    // straight on, slowing with drag; the yaw rate carries on
+    // straight on, slowing with drag. The yaw rate carries on, but at speed the airflow turns
+    // the heading towards the direction of travel (sideslip: + = moving to the car's left)
     this.vel.x -= k * this.vel.x * h;
     this.vel.z -= k * this.vel.z * h;
+    const slip = Math.atan2(this.vel.x * cos - this.vel.z * sin, this.vel.x * sin + this.vel.z * cos);
+    this.yawRate += (A.yawStiff * 0.5 * RHO * v * v * slip - A.yawDamp * v * this.yawRate) * h;
     this.yaw += this.yawRate * h;
     this.position.x += this.vel.x * h;
     this.position.z += this.vel.z * h;

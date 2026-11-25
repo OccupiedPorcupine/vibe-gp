@@ -577,9 +577,29 @@ console.log('\nairborne (Test Oval, and a crest at Spa)');
     flight(car, { throttle: 0.4, brake: 0, steer: 0.5 }, 8, (c) => {
       if (c.airborne) [hB, yawB, t] = [heading(c), c.yaw, t + dt];
     });
-    check(groundTurn > 0.1 && Math.abs(hB - hA) < 0.002 && Math.abs(yawB - yawA - rate * t) < 0.01,
-      'launched mid-corner: carries straight on, still yawing',
-      `turning ${(groundTurn * 57.3).toFixed(0)}°/s on the ground; ${(Math.abs(hB - hA) * 57.3).toFixed(2)}° in ${t.toFixed(2)} s of flight, yaw ${((yawB - yawA) * 57.3).toFixed(1)}°`);
+    check(groundTurn > 0.1 && Math.abs(hB - hA) < 0.002,
+      'launched mid-corner: carries straight on (no grip)',
+      `turning ${(groundTurn * 57.3).toFixed(0)}°/s on the ground; ${(Math.abs(hB - hA) * 57.3).toFixed(2)}° in ${t.toFixed(2)} s of flight (heading ${((yawB - yawA) * 57.3).toFixed(1)}°, yaw rate ${rate.toFixed(2)} rad/s at launch)`);
+  }
+
+  // kicked into a spin at speed: the airflow turns the heading back towards the direction of
+  // travel, so it turns only part of the way round before it lands (2.4 rad/s at 58 m/s, as
+  // an off-centre wheel-to-wheel launch gives; #21)
+  {
+    const car = rolling(58);
+    car.yawRate = 2.4;
+    const yaw0 = car.yaw;
+    car.launch({ vy: 4 });
+    let t = 0, peak = 0;
+    while (car.airborne && !car.firstHit && t < 3) {
+      car.step({ throttle: 0, brake: 0, steer: 0 }, dt);
+      t += dt;
+      peak = Math.max(peak, car.yaw - yaw0);
+    }
+    const turned = car.yaw - yaw0;
+    check(t > 0.25 && peak > 0.1 && peak < 0.35 && turned > 0.1 && turned < 0.35,
+      'yaw kick in the air at 58 m/s: turns 10–20°, not 2.4 rad/s × the flight',
+      `${t.toFixed(2)} s of flight: turned ${((turned * 180) / Math.PI).toFixed(0)}° by touchdown (peak ${((peak * 180) / Math.PI).toFixed(0)}°), ${((2.4 * t * 180) / Math.PI).toFixed(0)}° with nothing turning it back`);
   }
 
   // nose up past 20°: the downforce turns to lift, so it climbs harder than gravity allows
