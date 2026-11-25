@@ -6,9 +6,10 @@
 // - AIDriver: steers at a point ahead on that line (pure pursuit), holds the profile speed
 //   scaled by its own pace, and reacts to traffic: it follows a slower car, pulls out to
 //   pass it on the side with more room, and keeps clear of a car alongside.
-// - collideCars(): car-to-car contact. Each car is three circles along its length; overlaps
-//   are pushed apart and the closing speed is exchanged (equal masses), with some spin and
-//   (if damage is on) damage to both cars.
+// - collideCars(): car-to-car contact between the cars' part boxes (carShape.js). Solid
+//   parts (body, gearbox, nose, wheels) push the cars apart and exchange the closing speed
+//   (equal masses), with some spin; wings mostly break, with only a small shove. If damage
+//   is on, each part that touched takes damage.
 // - STYLES: every AI driver races in a style (aggressive, balanced, smooth or rookie): how
 //   late it brakes, how fast it takes corners, the gaps it leaves, how keen it is to pass,
 //   how often it makes a mistake and how it looks after its tyres. Each starts on its own
@@ -24,11 +25,11 @@ import { TYRE, COMPOUNDS, COMPOUND_LIST, tempGrip, wearGrip } from './tyres.js';
 import { PIT, angleDiff } from './trackPath.js';
 import { PitStop } from './pitStop.js';
 import { AI_PACE } from './tracks/aipace.js';
+import { BOXES, carBoxes, carHull, boxOverlap } from './carShape.js';
+import { DAMAGE } from './damage.js';
 
 const LINE_MARGIN = 1.5; // m between the racing line and the edge of the asphalt (car half width + a bit)
 const WALL_MARGIN = 2.2; // m between the racing line and a wall face
-const CAR_R = 1.0; // collision circle radius, m
-const CAR_CIRCLES = [-1.75, 0, 1.75]; // circle centres along the car, m from the CoG (car is ~5.6 m long)
 const RETIRE_TRIES = 6; // no-resets mode: recoveries that fail in a row before a car retires
 const STAMP = 20, STAMP_OFFSET = 400; // timing loops every 20 m, from 400 m behind the line
 const MASS = PARAMS.mass, INERTIA = PARAMS.yawInertia;
@@ -854,16 +855,21 @@ export class AIDriver {
   }
 }
 
-/** Car-to-car contacts so far (for scripts/ai-check.mjs): any closing touch, and hard ones (> 5 m/s). */
-export const CONTACTS = { touches: 0, hard: 0, involving: new Map() };
+/**
+ * Car-to-car contacts so far (for scripts/ai-check.mjs): new touches closing at over 1 m/s,
+ * and hard ones (> 5 m/s); parts: new touches by the pair of boxes that closed fastest
+ * ('wingL>wheelRR', names sorted). step: collideCars() calls so far; each car's touched[i]
+ * is the step its box i last touched another car (for the debug overlay).
+ */
+export const CONTACTS = { touches: 0, hard: 0, involving: new Map(), parts: new Map(), step: 0 };
 let stepNo = 0;
 
-/** Car-to-car contact for every pair in the field. */
-export function collideCars(field) {
-  stepNo++;
+/** Car-to-car contact for every pair in the field, once per physics step of dt seconds. */
+export function collideCars(field, dt = 1 / 120) {
+  CONTACTS.step = ++stepNo;
   for (let a = 0; a < field.length; a++) {
     for (let b = a + 1; b < field.length; b++) {
-      const hit = collidePair(field[a].physics, field[b].physics);
+      const hit = collidePair(field[a].physics, field[b].physics, dt);
       if (!hit) continue;
       CONTACTS.touches++;
       if (hit > 5) CONTACTS.hard++;
@@ -872,49 +878,204 @@ export function collideCars(field) {
   }
 }
 
-function collidePair(A, B) {
+// Car-to-car contact response
+const CONTACT = {
+  e: 0.25, // restitution of a solid contact ...
+  bounceSpeed: 1, // ... closing at this speed (m/s) or more; slower ones don't bounce (a rub stays a rub)
+  friction: 0.3, // side-to-side friction, as a share of the push (a tap from behind isn't ice)
+  sameWay: 0.85, // contacts whose normals are within ~30° of the deepest's share its spin point
+  // a wing touching something gives way: it passes on a push of at most this (m/s² on each
+  // car, about 0.2 g), and the overlap is left to grow as it crumples ...
+  fragileShove: 2,
+  // ... up to this (m): then it is bent as far as it goes. Driven in any further at more
+  // than wingSnap (m/s, at the contact) it snaps off; slower, the structure behind it takes
+  // the push (the overlap beyond the limit is pushed out like a solid part's), and each
+  // step's crush past the limit bends it further (DAMAGE.wingCrush) until it breaks.
+  fragileCrush: 0.1,
+  wingSnap: 3,
+  fragileHurt: 0.3, // damage a wing does to what it hits, relative to a solid part
+  damageScale: 0.8, // closing speed × this, then like a wall impact (cars give a little)
+  fresh: 60, // steps (0.5 s) apart before a pair's next touch counts as a new one
+};
+const N_BOX = BOXES.length;
+const hullA = {}, hullB = {};
+const touching = []; // this step's overlapping box pairs: { i, j, hit } (reused)
+// per box of each car: this step's hardest hit, and where it landed (world x, z)
+const hitA = { amount: new Float64Array(N_BOX), x: new Float64Array(N_BOX), z: new Float64Array(N_BOX) };
+const hitB = { amount: new Float64Array(N_BOX), x: new Float64Array(N_BOX), z: new Float64Array(N_BOX) };
+const isSolid = (d) => d.kind !== 'fragile';
+const crushed = { depth: 0, nx: 0, nz: 0, px: 0, pz: 0 }; // a wing contact past its crush limit (reused)
+
+/** Velocity of the car's body at world point (px, pz): its CoG's plus its spin about it. */
+function pointVel(car, px, pz, out) {
+  // a +yaw rotation moves an offset (rx, rz) from the CoG along (rz, -rx)
+  out.x = car.vel.x + car.yawRate * (pz - car.position.z);
+  out.z = car.vel.z - car.yawRate * (px - car.position.x);
+  return out;
+}
+const va = { x: 0, z: 0 }, vb = { x: 0, z: 0 };
+
+/** A wing that has broken off isn't on the car any more. */
+function gone(car, d) {
+  if (d.part === 'wing') return car.damage?.broken(d.i);
+  return d.part === 'rearWing' && car.damage?.rearWingBroken;
+}
+
+/**
+ * Contact between two cars: a hull test, then every part box against every part box.
+ * Solid parts push the cars apart along their single deepest overlap (and spin them from
+ * its contact point), so the push holds steady instead of jittering between parts. If only
+ * wings touch, a small shove, capped as a force (a wing gives way rather than push), until
+ * a wing is crushed past fragileCrush: then the structure behind it takes the push. Each part that touched takes damage from the
+ * closing speed across its own overlap.
+ * Returns undefined (not touching), or the closing speed of a new touch (0 if it carries on).
+ */
+function collidePair(A, B, dt) {
   const dx = B.position.x - A.position.x, dz = B.position.z - A.position.z;
   if (dx * dx + dz * dz > 49) return; // further apart than two car lengths
   if (Math.abs((A.height ?? 0) - (B.height ?? 0)) > 3) return; // Suzuka's crossover: one is on the bridge
-  const fa = { x: Math.sin(A.yaw), z: Math.cos(A.yaw) }, fb = { x: Math.sin(B.yaw), z: Math.cos(B.yaw) };
-  let best = null;
-  for (const oa of CAR_CIRCLES) {
-    const ax = A.position.x + fa.x * oa, az = A.position.z + fa.z * oa;
-    for (const ob of CAR_CIRCLES) {
-      const bx = B.position.x + fb.x * ob, bz = B.position.z + fb.z * ob;
-      const ex = bx - ax, ez = bz - az;
-      const d = Math.hypot(ex, ez);
-      const pen = 2 * CAR_R - d;
-      if (pen > 0 && (!best || pen > best.pen)) best = { pen, nx: d > 1e-4 ? ex / d : fa.x, nz: d > 1e-4 ? ez / d : fa.z, cx: (ax + bx) / 2, cz: (az + bz) / 2 };
+  if (!boxOverlap(carHull(A, hullA), carHull(B, hullB))) return;
+  const ba = carBoxes(A), bb = carBoxes(B);
+  let n = 0, solid = null, fragile = null;
+  for (let i = 0; i < N_BOX; i++) {
+    if (gone(A, ba[i].def)) continue;
+    for (let j = 0; j < N_BOX; j++) {
+      if (gone(B, bb[j].def)) continue;
+      const hit = boxOverlap(ba[i], bb[j]);
+      if (!hit) continue;
+      const t = (touching[n++] ??= {});
+      t.i = i; t.j = j; t.hit = hit;
+      if (isSolid(ba[i].def) && isSolid(bb[j].def)) {
+        if (!solid || hit.depth > solid.depth) solid = hit;
+      }
     }
   }
-  if (!best) return;
-  const { pen, nx, nz } = best; // n points from A to B
-  A.position.x -= nx * pen / 2; A.position.z -= nz * pen / 2;
-  B.position.x += nx * pen / 2; B.position.z += nz * pen / 2;
+  if (n === 0) return;
+  // Wings: short of their crush limit, they only give the small, capped shove below. Past
+  // it, driven in fast they snap off; slowly, each step's crush bends them further, and one
+  // still on takes the push of the overlap beyond the limit, like a solid part.
+  for (let k = 0; k < n; k++) {
+    const { i, j, hit } = touching[k];
+    const da = ba[i].def, db = bb[j].def;
+    if (isSolid(da) && isSolid(db)) continue;
+    const excess = hit.depth - CONTACT.fragileCrush;
+    if (excess > 0) {
+      pointVel(A, hit.px, hit.pz, va);
+      pointVel(B, hit.px, hit.pz, vb);
+      const snap = -((vb.x - va.x) * hit.nx + (vb.z - va.z) * hit.nz) > CONTACT.wingSnap;
+      if (!isSolid(da)) crush(A, da, snap ? Infinity : excess);
+      if (!isSolid(db)) crush(B, db, snap ? Infinity : excess);
+      if (gone(A, da) || gone(B, db)) continue; // it broke off: nothing left to push
+      if (!solid || excess > solid.depth) solid = Object.assign(crushed, hit, { depth: excess });
+    } else if (!fragile || hit.depth > fragile.depth) fragile = hit;
+  }
+
+  // the parts that touched, and how hard: the closing speed across each overlap, at its
+  // contact point (a spinning car's swinging tail hits harder than its centre moves)
+  let speed = 0, sx = 0, sz = 0, first = 0;
+  hitA.amount.fill(0); hitB.amount.fill(0);
+  const ta = (A.touched ??= new Float64Array(N_BOX).fill(-1e9)), tb = (B.touched ??= new Float64Array(N_BOX).fill(-1e9));
+  for (let k = 0; k < n; k++) {
+    const { i, j, hit } = touching[k];
+    ta[i] = tb[j] = stepNo;
+    pointVel(A, hit.px, hit.pz, va);
+    pointVel(B, hit.px, hit.pz, vb);
+    const closing = Math.max(0, -((vb.x - va.x) * hit.nx + (vb.z - va.z) * hit.nz));
+    if (closing > speed) { speed = closing; sx = hit.nx; sz = hit.nz; first = k; }
+    const h = damageHit(closing);
+    record(hitA, i, h * (isSolid(bb[j].def) ? 1 : CONTACT.fragileHurt), hit);
+    record(hitB, j, h * (isSolid(ba[i].def) ? 1 : CONTACT.fragileHurt), hit);
+  }
+
+  // push apart along the deepest overlap (solid parts only: a wing short of its limit gives way)
+  const c = solid ?? fragile;
+  if (!c) return 0; // only wings that just broke off
+  const { nx, nz } = c; // from A to B
+  const push = solid ? c.depth / 2 : 0;
+  A.position.x -= nx * push; A.position.z -= nz * push;
+  B.position.x += nx * push; B.position.z += nz * push;
+  // where it lands, for the spin: the middle of all the contacts pushing this way, wings
+  // too (a rub that touches at the rear wheels and the front wing spins the cars from
+  // between them, not from whichever end is deepest this step, which would see-saw them)
+  let px = 0, pz = 0, w = 0;
+  for (let k = 0; k < n; k++) {
+    const { hit } = touching[k];
+    if (hit.nx * nx + hit.nz * nz < CONTACT.sameWay) continue;
+    if (gone(A, ba[touching[k].i].def) || gone(B, bb[touching[k].j].def)) continue;
+    px += hit.px; pz += hit.pz; w++;
+  }
+  if (w > 0) { px /= w; pz /= w; } else { px = c.px; pz = c.pz; }
   const vr = (B.vel.x - A.vel.x) * nx + (B.vel.z - A.vel.z) * nz; // < 0: closing
-  if (vr >= 0) return 0;
-  const e = 0.25;
-  const j = (-(1 + e) * vr) / 2; // Δv each (equal masses)
-  A.vel.x -= nx * j; A.vel.z -= nz * j;
-  B.vel.x += nx * j; B.vel.z += nz * j;
-  // a little side-to-side friction, so a tap from behind doesn't feel like ice
-  const tx = -nz, tz = nx;
-  const vt = (B.vel.x - A.vel.x) * tx + (B.vel.z - A.vel.z) * tz;
-  const ft = Math.max(-j * 0.3, Math.min(j * 0.3, vt / 2));
-  A.vel.x += tx * ft; A.vel.z += tz * ft;
-  B.vel.x -= tx * ft; B.vel.z -= tz * ft;
-  // spin from where the hit lands (off-centre hits turn the car)
-  spin(A, best.cx, best.cz, -nx * j - tx * ft, -nz * j - tz * ft);
-  spin(B, best.cx, best.cz, nx * j + tx * ft, nz * j + tz * ft);
-  const speed = -vr;
-  hurt(A, nx, nz, speed);
-  hurt(B, -nx, -nz, speed);
+  if (vr < 0) {
+    const e = CONTACT.e * Math.min(1, -vr / CONTACT.bounceSpeed);
+    let j = (-(1 + e) * vr) / 2; // Δv each (equal masses)
+    if (!solid) j = Math.min(j, CONTACT.fragileShove * dt);
+    A.vel.x -= nx * j; A.vel.z -= nz * j;
+    B.vel.x += nx * j; B.vel.z += nz * j;
+    const tx = -nz, tz = nx;
+    const vt = (B.vel.x - A.vel.x) * tx + (B.vel.z - A.vel.z) * tz;
+    const ft = Math.max(-j * CONTACT.friction, Math.min(j * CONTACT.friction, vt / 2));
+    A.vel.x += tx * ft; A.vel.z += tz * ft;
+    B.vel.x -= tx * ft; B.vel.z -= tz * ft;
+    // spin from where the hit lands (off-centre hits turn the car)
+    spin(A, px, pz, -nx * j - tx * ft, -nz * j - tz * ft);
+    spin(B, px, pz, nx * j + tx * ft, nz * j + tz * ft);
+  }
+
+  if (speed > 0) {
+    impactSound(A, sx, sz, speed);
+    impactSound(B, -sx, -sz, speed);
+  }
   // a new touch, not the same one carried over: this pair hasn't touched for half a second
-  const seen = (A.lastTouch ??= new Map());
-  const fresh = stepNo - (seen.get(B) ?? -1e9) > 60;
-  seen.set(B, stepNo);
-  return fresh && speed > 1 ? speed : 0;
+  const seen = (A.touches ??= new Map());
+  let rec = seen.get(B);
+  if (!rec) seen.set(B, (rec = { step: -1e9, peakA: new Float64Array(N_BOX), peakB: new Float64Array(N_BOX) }));
+  const fresh = stepNo - rec.step > CONTACT.fresh;
+  rec.step = stepNo;
+  if (fresh) { rec.peakA.fill(0); rec.peakB.fill(0); }
+  damageParts(A, ba, hitA, rec.peakA);
+  damageParts(B, bb, hitB, rec.peakB);
+  if (!(fresh && speed > 1)) return 0;
+  const pair = [ba[touching[first].i].def.name, bb[touching[first].j].def.name].sort().join('>');
+  CONTACTS.parts.set(pair, (CONTACTS.parts.get(pair) ?? 0) + 1);
+  return speed;
+}
+
+/** A wing crushed `depth` m further past its limit: it bends by that much (DAMAGE.wingCrush); Infinity snaps it. */
+function crush(car, d, depth) {
+  if (car.damageOn) car.damage.hitPart(d.part, d.i, Math.min(depth / DAMAGE.wingCrush, 1));
+}
+
+/** Keep a box's hardest hit this step, and where it landed. */
+function record(hits, i, amount, hit) {
+  if (amount <= hits.amount[i]) return;
+  hits.amount[i] = amount; hits.x[i] = hit.px; hits.z[i] = hit.pz;
+}
+
+/** How hard a hit at this closing speed is for damage (CarDamage.hitPart's amount). */
+function damageHit(closing) {
+  const v = closing * CONTACT.damageScale;
+  return Math.min(1.5, Math.max(0, (v - DAMAGE.minSpeed) / (DAMAGE.fullSpeed - DAMAGE.minSpeed)));
+}
+
+/**
+ * Damage the car's parts that were hit this step. One touch can last many steps, so each
+ * part only takes what this step's hit adds to the hardest it has taken in this touch.
+ */
+function damageParts(car, boxes, hits, peak) {
+  if (!car.damageOn) return;
+  const sin = Math.sin(car.yaw), cos = Math.cos(car.yaw);
+  for (let i = 0; i < N_BOX; i++) {
+    const amount = hits.amount[i];
+    if (amount <= peak[i]) continue;
+    const d = boxes[i].def;
+    // where the hit landed, in the car frame: which side, and how far forward
+    const rx = hits.x[i] - car.position.x, rz = hits.z[i] - car.position.z;
+    const x = rx * sin + rz * cos, y = rx * cos - rz * sin;
+    const side = d.i ?? (y >= 0 ? 0 : 1);
+    car.damage.hitPart(d.part, side, amount - peak[i], x);
+    peak[i] = amount;
+  }
 }
 
 /** Yaw kick from an impulse (Δv in m/s, world) applied at world point (cx, cz). */
@@ -927,15 +1088,11 @@ function spin(car, cx, cz, jx, jz) {
   car.yawRate += (arm * MASS * 0.5) / INERTIA;
 }
 
-/** Impact sound and (if on) damage for a car hit towards (nx, nz) at `speed` m/s. */
-function hurt(car, nx, nz, speed) {
+/** The impact sound for a car hit towards (nx, nz) at `speed` m/s. */
+function impactSound(car, nx, nz, speed) {
   if (speed > car.impact) {
     car.impact = speed;
     car.impactSide = nx * Math.cos(car.yaw) - nz * Math.sin(car.yaw);
-  }
-  if (car.damageOn && speed > 3) {
-    const sin = Math.sin(car.yaw), cos = Math.cos(car.yaw);
-    car.damage.impact(nx * sin + nz * cos, nx * cos - nz * sin, speed * 0.8);
   }
 }
 
@@ -1149,7 +1306,7 @@ export class Race {
       }
       p.step(holding ? { ...ctl, hold: true } : ctl, dt);
     }
-    collideCars(this.entries);
+    collideCars(this.entries, dt);
     const L = this.path.length;
     for (const e of this.entries) {
       e.track(L, this.time);

@@ -6,6 +6,7 @@
 //   BOXES               the box table, in the car frame (x forward from the CoG, y left,
 //                       h above the road)
 //   carBoxes(car, out?) a car's boxes in world space (cached until the car moves)
+//   HULL, carHull()     one box around them all, for a cheap first test
 //   boxOverlap(a, b)    separating-axis test of two world boxes: depth, normal and contact
 //                       point, or null
 //   boxCorners(b, out?) a world box's four plan-view corners
@@ -33,13 +34,22 @@ function bounds(...names) {
 // Heights above the road (m), fitted to the car model
 const H = {
   body: [0, 0.95], // floor up to the engine cover (the airbox pokes a little above)
+  gearbox: [0, 0.8], // the diffuser up to the engine cover's tail (the fin pokes above)
   nose: [0.1, 0.55],
   wing: [0.04, 0.36], // front wing: the endplate's foot to its top
   rearWing: [0.6, 1.12], // rear wing: the endplate's foot to the flap's top
 };
 const NOSE = { tip: 2.95, halfWidth: 0.2 }; // the nose runs over the front wing to its tip
+// The car narrows behind the sidepods to the floor's edge by the rear tyres (±0.55 m), so
+// the body is two boxes: the full-width floor and sidepods, and the narrow gearbox behind.
+const WAIST = -1.3; // m: where the floor narrows (its edge point at -1.3, 0.55 in PARTS)
 
-const body = bounds('floor', 'sidepod', 'engine'); // the floor edge, sidepods and gearbox
+const outline = bounds('floor', 'sidepod', 'engine'); // the floor edge, sidepods and gearbox
+const body = { ...outline, x0: WAIST };
+// the gearbox reaches back to the crash structure, and out to the floor's edge behind the waist
+let tail = 0;
+for (const p of PARTS) if (p.part === 'floor') for (const [x, y] of p.pts) if (x <= WAIST) tail = Math.max(tail, Math.abs(y));
+const gearbox = { x0: outline.x0, x1: WAIST, y0: -tail, y1: tail };
 const wing = bounds('wing'); // both halves; each box takes one side
 const rear = bounds('rearWing');
 const CORNER = ['FL', 'FR', 'RL', 'RR'];
@@ -47,12 +57,14 @@ const CORNER = ['FL', 'FR', 'RL', 'RR'];
 /**
  * The car's boxes in the car frame: x forward from the CoG, y left, h above the road.
  * part and i name the damage part (CarDamage) a box stands for, with i its side (0 left,
- * 1 right) or corner (FL, FR, RL, RR). 'body' covers the floor, sidepods and gearbox, and
- * 'nose' is the survival cell, which never breaks.
+ * 1 right) or corner (FL, FR, RL, RR). 'body' covers the floor and sidepods, 'gearbox' the
+ * power unit, gearbox and diffuser behind them, and 'nose' is the survival cell, which never
+ * breaks. BOXES[0] is always the body.
  * kind: 'solid' parts push cars apart, 'fragile' ones (wings) mostly break, 'wheel's push.
  */
 export const BOXES = [
   { name: 'body', part: 'body', i: null, kind: 'solid', x0: body.x0, x1: body.x1, y0: body.y0, y1: body.y1, h0: H.body[0], h1: H.body[1] },
+  { name: 'gearbox', part: 'gearbox', i: null, kind: 'solid', x0: gearbox.x0, x1: gearbox.x1, y0: gearbox.y0, y1: gearbox.y1, h0: H.gearbox[0], h1: H.gearbox[1] },
   { name: 'nose', part: 'nose', i: null, kind: 'solid', x0: body.x1, x1: NOSE.tip, y0: -NOSE.halfWidth, y1: NOSE.halfWidth, h0: H.nose[0], h1: H.nose[1] },
   { name: 'wingL', part: 'wing', i: 0, kind: 'fragile', x0: wing.x0, x1: wing.x1, y0: NOSE.halfWidth, y1: wing.y1, h0: H.wing[0], h1: H.wing[1] },
   { name: 'wingR', part: 'wing', i: 1, kind: 'fragile', x0: wing.x0, x1: wing.x1, y0: wing.y0, y1: -NOSE.halfWidth, h0: H.wing[0], h1: H.wing[1] },
@@ -63,16 +75,25 @@ export const BOXES = [
   })),
 ];
 
+/** One box around all of BOXES: if two cars' hulls don't overlap, none of their boxes do. */
+export const HULL = BOXES.reduce((h, d) => ({
+  name: 'hull', part: null, i: null, kind: 'hull',
+  x0: Math.min(h.x0, d.x0), x1: Math.max(h.x1, d.x1), y0: Math.min(h.y0, d.y0), y1: Math.max(h.y1, d.y1), h0: Math.min(h.h0, d.h0), h1: Math.max(h.h1, d.h1),
+}), { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity, h0: Infinity, h1: -Infinity });
+
 // each box's centre and half sizes in the car frame
-const LOCAL = BOXES.map((d) => ({ mx: (d.x0 + d.x1) / 2, my: (d.y0 + d.y1) / 2, hx: (d.x1 - d.x0) / 2, hy: (d.y1 - d.y0) / 2 }));
+const local = (d) => ({ mx: (d.x0 + d.x1) / 2, my: (d.y0 + d.y1) / 2, hx: (d.x1 - d.x0) / 2, hy: (d.y1 - d.y0) / 2 });
+const LOCAL = BOXES.map(local);
+const HULL_LOCAL = local(HULL);
 
 const cache = new WeakMap(); // car → { x, z, yaw, h, boxes }
 
 /**
  * The car's boxes in world space: { cx, cz, fx, fz, hx, hy, h0, h1, def }. Centre
  * (cx, cz); unit forward axis (fx, fz) = (sin yaw, cos yaw), left axis (fz, −fx); half
- * length hx, half width hy; world heights h0, h1 (road height + the box's); def its BOXES
- * entry. In BOXES order.
+ * length hx, half width hy; world heights h0, h1 (the box's above the road, where the road
+ * is the height under the car carried along its slope, gradeF / gradeL, to the box's
+ * centre); def its BOXES entry. In BOXES order.
  *
  * Without `out`, the boxes are cached on the car and only worked out again once it has
  * moved, so a car is transformed once per step however many pairs it is tested in. The
@@ -80,27 +101,37 @@ const cache = new WeakMap(); // car → { x, z, yaw, h, boxes }
  * that array (and its objects) instead.
  */
 export function carBoxes(car, out) {
-  const p = car.position, yaw = car.yaw, h = car.height ?? 0;
+  const p = car.position, yaw = car.yaw, h = car.height ?? 0, gf = car.gradeF ?? 0, gl = car.gradeL ?? 0;
   if (!out) {
     let c = cache.get(car);
-    if (c && c.x === p.x && c.z === p.z && c.yaw === yaw && c.h === h) return c.boxes;
+    if (c && c.x === p.x && c.z === p.z && c.yaw === yaw && c.h === h && c.gf === gf && c.gl === gl) return c.boxes;
     if (!c) cache.set(car, (c = { boxes: [] }));
-    c.x = p.x; c.z = p.z; c.yaw = yaw; c.h = h;
+    c.x = p.x; c.z = p.z; c.yaw = yaw; c.h = h; c.gf = gf; c.gl = gl;
     out = c.boxes;
   }
-  const fx = Math.sin(yaw), fz = Math.cos(yaw); // forward; left is (fz, -fx)
-  for (let k = 0; k < BOXES.length; k++) {
-    const def = BOXES[k], l = LOCAL[k];
-    const b = (out[k] ??= {});
-    b.cx = p.x + fx * l.mx + fz * l.my;
-    b.cz = p.z + fz * l.mx - fx * l.my;
-    b.fx = fx; b.fz = fz;
-    b.hx = l.hx; b.hy = l.hy;
-    b.h0 = h + def.h0; b.h1 = h + def.h1;
-    b.def = def;
-  }
+  for (let k = 0; k < BOXES.length; k++) place((out[k] ??= {}), car, BOXES[k], LOCAL[k]);
   out.length = BOXES.length;
   return out;
+}
+
+/** The car's HULL in world space (same format as carBoxes), into `out`. */
+export function carHull(car, out = {}) {
+  return place(out, car, HULL, HULL_LOCAL);
+}
+
+function place(b, car, def, l) {
+  const p = car.position;
+  // the road under the box: the height under the car, plus the slope out to the box's centre
+  // (so two cars on a hill stay level with each other; the car's own pitch and roll aren't in)
+  const h = (car.height ?? 0) + (car.gradeF ?? 0) * l.mx + (car.gradeL ?? 0) * l.my;
+  const fx = Math.sin(car.yaw), fz = Math.cos(car.yaw); // forward; left is (fz, -fx)
+  b.cx = p.x + fx * l.mx + fz * l.my;
+  b.cz = p.z + fz * l.mx - fx * l.my;
+  b.fx = fx; b.fz = fz;
+  b.hx = l.hx; b.hy = l.hy;
+  b.h0 = h + def.h0; b.h1 = h + def.h1;
+  b.def = def;
+  return b;
 }
 
 /** A world box's plan-view corners, as [x, z, x, z, ...]: front left, front right, rear right, rear left. */

@@ -65,6 +65,7 @@ while (race.finishOrder.length < race.entries.filter((e) => !e.retired).length &
 }
 const ms = performance.now() - tSim;
 console.log(`car-to-car contacts: ${CONTACTS.touches} (hard, > 5 m/s: ${CONTACTS.hard})`);
+if (CONTACTS.parts.size) console.log(`  by parts: ${[...CONTACTS.parts].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(', ')}`);
 console.log(`simulated ${(race.time).toFixed(0)} s in ${(ms / 1000).toFixed(1)} s (${((ms / frames) * 1000 / race.entries.length).toFixed(0)} µs per car-step)`);
 for (const e of race.order) {
   const s = stats.get(e);

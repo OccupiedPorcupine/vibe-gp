@@ -11,7 +11,8 @@
 //   engine         power unit and gearbox (rear-end hits, and heavy hits anywhere): power.
 // The monocoque and halo are the survival cell: they never break.
 //
-// Damage comes from wall impacts (physics.js). Each part is described by its outermost
+// Damage comes from wall impacts (physics.js, impact()) and from other cars (ai.js,
+// hitPart(): only the parts whose collision boxes touched). Each part is described by its outermost
 // points on the car. The wall touches the car at whichever point sticks out furthest
 // towards it, and the hit then crushes into the car to a depth that grows with the
 // speed into the wall: every part with a point inside that depth is hit, harder the
@@ -55,6 +56,12 @@ export const DAMAGE = {
   tyreCrr: 0.05, // extra rolling resistance coefficient at full damage
   // engine and gearbox
   enginePowerLoss: 0.5, // power lost at full damage
+  // car-to-car contact (hitPart)
+  sidepodCrush: 0.25, // a side hit into the body crushes the sidepod only past this much hit ...
+  mirrorCrush: 0.5, // ... and takes the mirror past this much
+  noseWing: 0.5, // share of a hit on the nose's tip that each front wing half takes
+  diffuser: 0.5, // share of a hit on the gearbox that the floor (diffuser) on that side takes
+  wingCrush: 0.1, // m a wing is crushed past its limit (ai.js) for a full hit: a fast clip snaps it, a steady shove bends it
 };
 
 /**
@@ -82,6 +89,14 @@ export const PARTS = [
     return [{ part: 'tyre', i: c, k: 0.9, pts }, { part: 'suspension', i: c, k: 0.75, pts }];
   }),
 ];
+
+const K = {}; // fragility of each part
+for (const p of PARTS) K[p.part] ??= p.k;
+const span = (part) => {
+  const xs = PARTS.filter((p) => p.part === part).flatMap((p) => p.pts.map(([x]) => x));
+  return [Math.min(...xs), Math.max(...xs)];
+};
+const SIDEPOD = span('sidepod'), MIRROR = span('mirror'), WING = span('wing');
 
 /** Damage state of one car. Side index 0 = left, 1 = right; corners in wheel order (FL, FR, RL, RR). */
 export class CarDamage {
@@ -170,6 +185,45 @@ export class CarDamage {
     }
     // a big hit anywhere shakes the power unit and the gearbox
     if (hit > 0.6) this.add('engine', null, (hit - 0.6) * 0.25);
+  }
+
+  /**
+   * Another car hit one of this car's parts: one of the collision boxes in carShape.js.
+   * part and side as in BOXES ('body', 'gearbox', 'nose', 'wing', 'rearWing' or 'tyre';
+   * side 0 left / 1 right, or the corner for a tyre); amount: how hard (0 = too slow to
+   * break anything, 1 = a full-speed hit right on it), scaled here by each part's
+   * fragility; x: where along the car it landed (m forward of the CoG).
+   *   body     the floor edge on that side; a harder hit also crushes the sidepod, and
+   *            takes the mirror if it lands beside the cockpit
+   *   gearbox  the power unit and gearbox, and the diffuser (floor) on that side
+   *   nose     the survival cell doesn't break, but a hit on its tip, over the front
+   *            wing, bends both wing halves
+   *   wing, rearWing  that wing;  tyre  the tyre and its suspension
+   */
+  hitPart(part, side, amount, x = 0) {
+    if (!(amount > 0)) return;
+    switch (part) {
+      case 'wing':
+      case 'rearWing':
+        this.add(part, part === 'wing' ? side : null, amount * K[part]);
+        break;
+      case 'tyre':
+        this.add('tyre', side, amount * K.tyre);
+        this.add('suspension', side, amount * K.suspension);
+        break;
+      case 'body':
+        this.add('floor', side, amount * K.floor);
+        if (x > SIDEPOD[0] - 0.3 && x < SIDEPOD[1] + 0.1) this.add('sidepod', side, (amount - D.sidepodCrush) * K.sidepod);
+        if (x > MIRROR[0] - 0.5 && x < MIRROR[1] + 0.5) this.add('mirror', side, (amount - D.mirrorCrush) * K.mirror);
+        break;
+      case 'gearbox':
+        this.add('engine', null, amount * K.engine);
+        this.add('floor', side, amount * D.diffuser * K.floor);
+        break;
+      case 'nose':
+        if (x > WING[0]) for (const s of [0, 1]) this.add('wing', s, amount * D.noseWing * K.wing);
+        break;
+    }
   }
 
   add(part, side, amount) {
