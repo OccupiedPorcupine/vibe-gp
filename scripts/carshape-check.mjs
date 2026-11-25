@@ -9,7 +9,7 @@
 globalThis.location ??= { search: '' };
 globalThis.matchMedia ??= () => ({ matches: false, addEventListener() {} });
 globalThis.Path2D ??= class { constructor() {} addPath() {} moveTo() {} lineTo() {} bezierCurveTo() {} quadraticCurveTo() {} arc() {} ellipse() {} rect() {} closePath() {} };
-const { BOXES, carBoxes, boxOverlap, boxCorners } = await import('../src/carShape.js');
+const { BOXES, HULL, carBoxes, carHull, boxOverlap, boxCorners } = await import('../src/carShape.js');
 
 let failed = 0, passed = 0;
 function check(name, ok, detail = '') {
@@ -41,16 +41,19 @@ function overlap(name, a, b, want) {
 }
 
 // --- the box table
-check('9 boxes', BOXES.length === 9, `${BOXES.length}`);
+check('10 boxes, body first', BOXES.length === 10 && BOXES[0].name === 'body', `${BOXES.length}`);
 for (const d of BOXES) {
   check(`${d.name}: extents in order`, d.x0 < d.x1 && d.y0 < d.y1 && d.h0 < d.h1 && d.h0 >= 0, JSON.stringify(d));
   check(`${d.name}: kind`, ['solid', 'fragile', 'wheel'].includes(d.kind), d.kind);
 }
 const by = Object.fromEntries(BOXES.map((d) => [d.name, d]));
 check('body ends where the nose starts', by.body.x1 === by.nose.x0);
+check('gearbox starts where the body ends', by.gearbox.x1 === by.body.x0 && by.gearbox.kind === 'solid');
+check('gearbox fits between the rear tyres', by.gearbox.y1 < by.wheelRL.y0 && by.gearbox.y0 > by.wheelRR.y1 && by.gearbox.y1 < by.body.y1);
+check('hull holds every box', BOXES.every((d) => d.x0 >= HULL.x0 && d.x1 <= HULL.x1 && d.y0 >= HULL.y0 && d.y1 <= HULL.y1 && d.h0 >= HULL.h0 && d.h1 <= HULL.h1));
 check('front wing halves mirror each other', by.wingL.y0 === -by.wingR.y1 && by.wingL.y1 === -by.wingR.y0 && by.wingL.x0 === by.wingR.x0);
 check('rear wing is above the front wing', by.rearWing.h0 > by.wingL.h1);
-check('the nose fits under the rear wing', by.nose.h1 < by.rearWing.h0 && by.nose.h1 > by.body.h0);
+check('the nose fits under the rear wing', by.nose.h1 < by.rearWing.h0 && by.nose.h1 > by.gearbox.h0);
 check('wheels in FL FR RL RR order', ['FL', 'FR', 'RL', 'RR'].every((c, i) => by[`wheel${c}`].i === i && by[`wheel${c}`].part === 'tyre'));
 check('left wheels are on the left', by.wheelFL.y0 > 0 && by.wheelRL.y0 > 0 && by.wheelFR.y1 < 0 && by.wheelRR.y1 < 0);
 
@@ -76,6 +79,9 @@ check('left wheels are on the left', by.wheelFL.y0 > 0 && by.wheelRL.y0 > 0 && b
   check('worked out again once the car moves', carBoxes(car) === boxes && near(boxes[0].cx, before + 1));
   car.yaw = 0;
   check('...or turns', near(carBoxes(car)[0].fz, 1));
+  // hull: same pose as the boxes
+  const hull = carHull(car);
+  check('hull in world', near(hull.fz, 1) && near(hull.hx, (HULL.x1 - HULL.x0) / 2) && near(hull.h1, 5 + HULL.h1) && hull.def === HULL);
   // with out: a separate array, the cache untouched
   const out = carBoxes({ position: { x: 0, z: 0 }, yaw: 0 }, []);
   check('fills out', out.length === BOXES.length && out !== boxes && near(out[0].h0, BOXES[0].h0));
@@ -134,10 +140,10 @@ overlap('one inside the other', box(0, 0, 0, 3, 2), box(0.5, 0, 0, 0.5, 0.5), { 
   const pair = (name, A, B, test) => { const h = hits(A, B); check(name, test(h), h.join(' ') || 'no contact'); };
   // cars nose to tail, 5.6 m apart (CoG to CoG): just short of touching
   pair('in line, a car length apart: no contact', make(0, 0, 0), make(0, 6.0, 0), (h) => h.length === 0);
-  // nose 0.27 m into the gearbox: it passes under the rear wing and hits the body
-  pair('nose into a gearbox: under the rear wing', make(0, 0, 0), make(0, 5.2, 0), (h) => h.includes('nose>body') && !h.some((s) => s.startsWith('nose>rearWing')));
+  // nose 0.27 m into the gearbox: it passes under the rear wing and hits the gearbox
+  pair('nose into a gearbox: under the rear wing', make(0, 0, 0), make(0, 5.2, 0), (h) => h.includes('nose>gearbox') && !h.some((s) => s.endsWith('>rearWing')));
   // offset by a car width: the left endplate clips the other car's right rear tyre
-  pair('endplate clips a rear tyre', make(0, 0, 0), make(1.75, 4.5, 0), (h) => h.includes('wingL>wheelRR') && !h.some((s) => s.startsWith('body') || s.startsWith('nose')));
+  pair('endplate clips a rear tyre', make(0, 0, 0), make(1.75, 4.5, 0), (h) => h.length === 1 && h[0] === 'wingL>wheelRR');
   // side by side, 1.97 m apart: the rear wheels (the widest point) just touch, nothing else
   pair('side by side, wheel to wheel', make(0, 0, 0), make(1.97, 0, 0), (h) => h.length > 0 && h.every((s) => /wheel.*>wheel/.test(s)));
   // T-bone: B across A's path, A's nose in B's sidepod
@@ -145,7 +151,7 @@ overlap('one inside the other', box(0, 0, 0, 3, 2), box(0.5, 0, 0, 0.5, 0.5), { 
   pair('on a bridge', make(0, 0, 0, 0), make(0, 0, 1, 8), (h) => h.length === 0);
 }
 
-// --- speed: one full 9×9 part test
+// --- speed: one full part-against-part test
 {
   const A = { position: { x: 0, z: 0 }, yaw: 0.1 }, B = { position: { x: 0.5, z: 3 }, yaw: 0.3 };
   const n = 20000, t0 = performance.now();
@@ -155,7 +161,7 @@ overlap('one inside the other', box(0, 0, 0, 3, 2), box(0.5, 0, 0, 0.5, 0.5), { 
     for (const a of carBoxes(A)) for (const b of carBoxes(B)) if (boxOverlap(a, b)) k++;
   }
   const us = ((performance.now() - t0) * 1000) / n;
-  console.log(`car pair, all 81 part tests: ${us.toFixed(2)} µs (${(k / n).toFixed(1)} overlapping)`);
+  console.log(`car pair, all ${BOXES.length ** 2} part tests: ${us.toFixed(2)} µs (${(k / n).toFixed(1)} overlapping)`);
 }
 
 console.log(`${passed} passed, ${failed} failed`);
