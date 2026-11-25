@@ -40,6 +40,14 @@ export const CAR_DIMS = {
   rearWidth: 0.4,
 };
 
+/** Wheel layout in the car frame (x forward from the CoG, y to the left), in the order FL, FR, RL, RR. */
+export const WHEELS = [
+  { x: CAR_DIMS.frontAxle, y: CAR_DIMS.track, r: CAR_DIMS.frontRadius, w: CAR_DIMS.frontWidth, front: true },
+  { x: CAR_DIMS.frontAxle, y: -CAR_DIMS.track, r: CAR_DIMS.frontRadius, w: CAR_DIMS.frontWidth, front: true },
+  { x: CAR_DIMS.rearAxle, y: CAR_DIMS.track, r: CAR_DIMS.rearRadius, w: CAR_DIMS.rearWidth, front: false },
+  { x: CAR_DIMS.rearAxle, y: -CAR_DIMS.track, r: CAR_DIMS.rearRadius, w: CAR_DIMS.rearWidth, front: false },
+];
+
 // Front wing: each half hinges off the centre section where it would bend in a hit.
 const FRONT_WING = { span: 0.975, hinge: 0.3, pivotY: 0.1, pivotZ: 2.62, centreY: 0.13 };
 const ENDPLATE_OFF = 0.4; // wing damage at which that side's endplate is knocked off
