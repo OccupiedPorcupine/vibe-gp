@@ -918,21 +918,18 @@ const CONTACT = {
   fresh: 60, // steps (0.5 s) apart before a pair's next touch counts as a new one
 };
 // Launches: a front tyre running into the back of another car's rear tyre. That tyre's back
-// face rolls upwards at about the road speed, so the grip between the two tyres throws the
-// car behind up at its front axle: it rises, nose first, and the side whose wheel rode up
-// rolls up. The car in front just takes the wheel-to-wheel hit (tyre and suspension damage,
-// some spin), as any solid contact.
+// face rolls upwards at about the road speed, so the grip between the two tyres pushes the
+// riding tyre up: an impulse up at that wheel, a share (grip) of the push between the tyres.
+// Ahead of the centre of mass and out to one side, it lifts the nose and that side; the
+// wheels still on the road take the rest (CarPhysics.launch resolves the kick against the
+// road), so the car pivots up about them. The car in front just takes the wheel-to-wheel
+// hit (tyre and suspension damage, some spin), as any solid contact.
 const LAUNCH = {
   minClosing: 5, // m/s: the front tyre running into the rear tyre at least this fast
   minOverlap: 0.1, // m of the two tyres' widths lined up across the cars
   behind: 0.7, // the contact's normal within ~45° of the car in front's heading
-  grip: 0.25, // m/s up per m/s of closing: tyre-on-tyre friction on the push ...
-  maxVy: 6, // ... capped (m/s)
-  // nose-up and roll rates per m/s up. The lift lands on the front axle, so the natural pitch
-  // kick is a few times this; held down until a car can pivot on the wheels still on the road
-  // (#22): the lowest corner (2.74 m back, 1 m out) must rise, 2.74·pitch + 1·roll < vy
-  pitchPerVy: 0.3,
-  rollPerVy: 0.12,
+  grip: 0.25, // tyre-on-tyre friction: the upward impulse as a share of the push between the tyres
+  maxKick: 6, // m/s: the upward impulse at most this (as a speed of the whole car)
 };
 const N_BOX = BOXES.length;
 const hullA = {}, hullB = {};
@@ -1113,9 +1110,18 @@ function launchFrom(A, B, ba, bb, n) {
     const apart = Math.abs((rw.cx - lw.cx) * lx + (rw.cz - lw.cz) * lz);
     if (rw.hy + lw.hy - apart < LAUNCH.minOverlap) continue;
     if (best && closing <= best.closing) continue;
-    const vy = Math.min(LAUNCH.maxVy, LAUNCH.grip * closing);
-    const side = rw.def.i === 0 ? 1 : -1; // the left front wheel rode up: the left side rises
-    best = { car: rider, closing, vy, pitchRate: -LAUNCH.pitchPerVy * vy, rollRate: side * LAUNCH.rollPerVy * vy };
+    // the push between the tyres (Δv each, as collidePair's impulse), and the grip's share of
+    // it upwards, at the riding wheel (x forward, y left of the centre of mass)
+    const push = ((1 + CONTACT.e) / 2) * closing;
+    const kick = Math.min(LAUNCH.maxKick, LAUNCH.grip * push); // J / m
+    const d = rw.def, x = (d.x0 + d.x1) / 2, y = (d.y0 + d.y1) / 2;
+    best = {
+      car: rider,
+      closing,
+      vy: kick,
+      pitchRate: -(kick * PARAMS.mass * x) / PARAMS.pitchInertia, // pushed up ahead of the CoG: nose up
+      rollRate: (kick * PARAMS.mass * y) / PARAMS.rollInertia, // pushed up on the left: left up
+    };
   }
   return best;
 }

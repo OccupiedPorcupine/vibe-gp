@@ -478,14 +478,20 @@ console.log('\ncar-to-car scenarios (Suzuka start straight)');
     // B's rear tyre's back face `gap` m ahead of A's front tyre (2.09 + 2.01 m between centres)
     const A = car(0, 0, v + dv), B = car(2.09 + 2.01 + gap, lat, v, turn);
     const l0 = CONTACTS.launches;
-    let peak = 0, airSteps = 0, launchedAt = -1;
+    let peak = 0, airSteps = 0, launchedAt = -1, pitch = 0, roll = 0;
     run(A, B, steps, {}, {}, (k) => {
-      if (A.airborne) { airSteps++; if (launchedAt < 0) launchedAt = k; }
+      if (A.airborne) {
+        airSteps++;
+        if (launchedAt < 0) launchedAt = k;
+        pitch = Math.max(pitch, -A.pitch); // nose up
+        roll = Math.max(roll, Math.abs(A.roll));
+      }
       peak = Math.max(peak, A.air ?? 0);
     });
-    return { A, B, launches: CONTACTS.launches - l0, peak, air: airSteps / 120, launchedAt };
+    return { A, B, launches: CONTACTS.launches - l0, peak, air: airSteps / 120, launchedAt, pitch, roll };
   }
-  const showLaunch = (tag, r) => console.log(`    ${tag}: ${r.launches} launch${r.launches === 1 ? '' : 'es'}; A up ${r.peak.toFixed(2)} m for ${r.air.toFixed(2)} s | A ${damaged(r.A)} | B ${damaged(r.B)}`);
+  const deg = (x) => `${((x * 180) / Math.PI).toFixed(0)}°`;
+  const showLaunch = (tag, r) => console.log(`    ${tag}: ${r.launches} launch${r.launches === 1 ? '' : 'es'}; A up ${r.peak.toFixed(2)} m, ${r.air.toFixed(2)} s off the road (bounces too), nose up to ${deg(r.pitch)}, roll to ${deg(r.roll)}${r.A.wrecked ? ', WRECKED' : ''} | A ${damaged(r.A)} | B ${damaged(r.B)}`);
   {
     const r = launchRun(15);
     showLaunch('launch, 15 m/s', r);
