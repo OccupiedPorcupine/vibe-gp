@@ -144,9 +144,13 @@ export const AIR = {
 
 // Wall hits (wallImpact): impulses at the contact point.
 export const WALL = {
-  bounce: 0.3, // the contact point comes off the wall at this share of its closing speed
-  friction: 0.46, // the scrub along the wall, per unit of the bounce impulse ...
-  scrub: 0.02, // ... plus this much (m/s of the car's speed), so a touch still scrapes
+  bounce: 0.3, // the contact point comes off the wall at this share of its closing speed; the
+  //              centre at least that share of its own (a car pivoting about its hit corner
+  //              while its centre still closes would otherwise get no push off and pin)
+  friction: 0.46, // the scrub along the wall, per unit of the push off ...
+  scrub: 0.02, // ... plus this much (m/s of the car's speed), so a touch still scrapes. Both act at
+  //              the centre: slowing the car, not turning it (friction at the hit corner wedges
+  //              the nose of a steep hit into the wall)
   damp: 0.5, // share of the car's rotation a hard hit leaves (crumpling, the tyres scrubbing) ...
   dampSpeed: 10, // ... closing at this many m/s or more; a lighter touch leaves more, a brush all
   spin: 0.25, // share of the rigid car's yaw response the hit gets: the wing and nose crumple
@@ -205,7 +209,8 @@ export class CarPhysics {
     this.surface = 'asphalt';
     this.gear = 1;
     this.rpm = 0;
-    this.wallHit = 0;
+    this.wallHit = 0; // how hard it last hit a wall (0..1); holds while the car stays touching
+    this.wallTouch = false; // touching a wall this step
     this.impact = 0; // hardest hit since the sound last read it (m/s into the wall)
     this.impactSide = 0; // where that hit landed: + = the car's left
     this.scrape = 0; // fastest slide along a wall since the sound last read it (m/s)
@@ -916,7 +921,6 @@ export class CarPhysics {
     pose.height = this.height;
     const prev = carBoxes(pose, (this.prevBoxes ??= []));
     let hit = false;
-    this.wallHit = Math.max(0, this.wallHit - 0.05); // fades even while touching; a hit raises it
     for (let iter = 0; iter < 3; iter++) {
       const boxes = carBoxes(this);
       let best = null;
@@ -945,6 +949,8 @@ export class CarPhysics {
       this.prevPos.x = p.x;
       this.prevPos.z = p.z;
     }
+    this.wallTouch = hit;
+    if (!hit) this.wallHit = Math.max(0, this.wallHit - 0.05);
   }
 
   /**
@@ -961,44 +967,48 @@ export class CarPhysics {
     this.scrape = Math.max(this.scrape, Math.abs(this.vel.z * nx - this.vel.x * nz));
     // the contact point from the centre; a +yaw rotation moves it along (rz, −rx)
     const rx = px - p.x, rz = pz - p.z;
-    const vn = this.vel.x * nx + this.vel.z * nz + this.yawRate * (rz * nx - rx * nz);
-    if (vn > 0) {
-      if (vn > this.impact) {
-        this.impact = vn;
-        this.impactSide = nx * Math.cos(this.yaw) - nz * Math.sin(this.yaw);
-      }
-      this.yawRate *= 1 - (1 - WALL.damp) * Math.min(1, vn / WALL.dampSpeed); // a hard hit kills most of the rotation
-      const im = 1 / P.mass, ii = WALL.spin / P.yawInertia;
-      const apply = (dx, dz, j) => {
-        this.vel.x += dx * j * im;
-        this.vel.z += dz * j * im;
-        this.yawRate += (rz * dx - rx * dz) * j * ii;
-      };
-      // bounce off the wall-normal part, at the contact point (after the damping)
-      const kn = rz * nx - rx * nz;
-      const vn1 = this.vel.x * nx + this.vel.z * nz + this.yawRate * kn;
-      const jn = vn1 > 0 ? ((1 + WALL.bounce) * vn1) / (im + kn * kn * ii) : 0;
-      apply(nx, nz, -jn);
-      // friction along the wall scales with the bounce, so a glancing scrape costs a
-      // little and a head-on hit costs a lot; it never reverses the slide
-      const tx = -nz, tz = nx;
-      const kt = rz * tx - rx * tz;
-      const vt = this.vel.x * tx + this.vel.z * tz + this.yawRate * kt;
-      const stop = Math.abs(vt) / (im + kt * kt * ii);
-      const jt = Math.min(stop, WALL.friction * jn);
-      apply(tx, tz, -Math.sign(vt) * jt);
-      // and a light touch still scrapes some speed off: at the centre, as it would otherwise
-      // turn the car into the wall at every touch and hold it there
-      const vc = this.vel.x * tx + this.vel.z * tz;
-      const sc = Math.min(Math.abs(vc), WALL.scrub);
-      this.vel.x -= tx * Math.sign(vc) * sc;
-      this.vel.z -= tz * Math.sign(vc) * sc;
-      this.wallHit = Math.min(1, Math.max(this.wallHit, vn / 20));
-      // which way the wall faces the car decides which front parts take the hit
-      if (this.damageOn) {
-        const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
-        this.damage.impact(nx * sin + nz * cos, nx * cos - nz * sin, vn);
-      }
+    const kn = rz * nx - rx * nz;
+    const vc = this.vel.x * nx + this.vel.z * nz; // the centre's closing speed
+    const vn = vc + this.yawRate * kn; // the contact point's
+    const close = Math.max(vn, vc);
+    if (close <= 0) return;
+    if (close > this.impact) {
+      this.impact = close;
+      this.impactSide = nx * Math.cos(this.yaw) - nz * Math.sin(this.yaw);
+    }
+    this.yawRate *= 1 - (1 - WALL.damp) * Math.min(1, close / WALL.dampSpeed); // a hard hit kills most of the rotation
+    const im = 1 / P.mass, ii = WALL.spin / P.yawInertia;
+    const apply = (dx, dz, j) => {
+      this.vel.x += dx * j * im;
+      this.vel.z += dz * j * im;
+      this.yawRate += (rz * dx - rx * dz) * j * ii;
+    };
+    // bounce off the wall-normal part, at the contact point (after the damping): this
+    // turns the car
+    const vn1 = this.vel.x * nx + this.vel.z * nz + this.yawRate * kn;
+    const jn = vn1 > 0 ? ((1 + WALL.bounce) * vn1) / (im + kn * kn * ii) : 0;
+    apply(nx, nz, -jn);
+    // and the centre comes off the wall at least as fast as the bounce would send it on
+    // its own: else a car turning about the corner it hit leans on the wall, its centre
+    // still closing while the corner isn't, until it stops there
+    const vc1 = this.vel.x * nx + this.vel.z * nz, out = -WALL.bounce * Math.max(vc, 0);
+    const lift = Math.max(0, vc1 - out); // m/s
+    this.vel.x -= nx * lift;
+    this.vel.z -= nz * lift;
+    // friction along the wall scales with the bounce, so a glancing scrape costs a little
+    // and a head-on hit costs a lot (a light touch still scrapes some speed off). It acts
+    // at the centre: it slows the car but doesn't turn it, as at a corner it drags the nose
+    // back, turning it into the wall to wedge it there
+    const tx = -nz, tz = nx;
+    const vs = this.vel.x * tx + this.vel.z * tz;
+    const sc = Math.min(Math.abs(vs), WALL.friction * (jn * im + lift) + WALL.scrub);
+    this.vel.x -= tx * Math.sign(vs) * sc;
+    this.vel.z -= tz * Math.sign(vs) * sc;
+    this.wallHit = Math.min(1, Math.max(this.wallHit, close / 20));
+    // which way the wall faces the car decides which front parts take the hit
+    if (this.damageOn) {
+      const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
+      this.damage.impact(nx * sin + nz * cos, nx * cos - nz * sin, close);
     }
   }
 
