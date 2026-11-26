@@ -18,7 +18,8 @@
 //     are road-traffic directions, so they are ignored), else the config's `dir`.
 //  4. Start line: the circuit's raceway=finish (or start-finish) node (the timing line), else
 //     raceway=start, else `start` (lat/lon), else abeam the middle of the pit lane.
-//  5. Pit lane: raceway ways tagged as a pit lane (raceway=pit_lane/pitlane, service=pit_lane
+//  5. Pit lane (`pitOpen: { at: [[from, to]], note }` in the config: lap metres where only paint
+//     separates it from the track, so the game builds no pit wall there): raceway ways tagged as a pit lane (raceway=pit_lane/pitlane, service=pit_lane
 //     or "pit" in the name), chained into the longest path that leaves and rejoins the
 //     lap, oriented in the racing direction.
 //     Corners tighter than `minRadius` (default 12.5 m) are eased locally: some OSM hairpins
@@ -482,7 +483,9 @@ ${fmt(points)}
   ],${pit ? `
   // pit lane from OSM, from where it leaves the track to where it rejoins
   pitlane: {${c.pitHug ? `
-    hug: true, // ${c.pitHug}` : ''}
+    hug: true, // ${c.pitHug}` : ''}${c.pitOpen ? `
+    // ${c.pitOpen.note}
+    open: ${JSON.stringify(c.pitOpen.at).replace(/,/g, ', ')},` : ''}
     points: [
 ${fmt(pit).replace(/^ {4}/gm, '      ')}
     ],

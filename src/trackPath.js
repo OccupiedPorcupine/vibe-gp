@@ -19,6 +19,8 @@
 //           hug: true pulls a lane that real data puts well away from the track (Monaco's,
 //           midway between the start straight and the Swimming Pool) in beside it, a pit
 //           wall's width off, so the garage block behind it stays clear of other roads.
+//           open: [[from, to], ...] lap metres where only paint and kerbs separate the
+//           lane from the track (the Nürburgring's last corner): no pit wall there.
 //
 // World mapping: world.x = x, world.z = -y (so north is -Z, and a top-down view
 // with -Z up matches the map).
@@ -389,6 +391,10 @@ export class TrackPath {
     const pit = this.pit;
     if (pit) {
       const limL = Float64Array.from(this.wallL), limR = Float64Array.from(this.wallR);
+      const painted = (i) => (this.def.pitlane?.open ?? []).some(([a, b]) => {
+        const s = i * this.ds;
+        return a <= b ? s >= a && s <= b : s >= a || s <= b;
+      });
       const cell = 40;
       const grid = new Map();
       for (let j = 0; j < pit.N; j++) {
@@ -408,6 +414,10 @@ export class TrackPath {
               const side = dx * this.leftX(i) + dz * this.leftZ(i);
               if (Math.sign(side) !== pit.side) continue; // the lane only ever runs on one side
               const d = Math.abs(side);
+              if (painted(i)) {
+                (side > 0 ? this.openL : this.openR)[i] = 1;
+                continue;
+              }
               // which edge of the lane faces this part of the track
               const facesOuter = Math.sign(-(dx * pit.leftX(j) + dz * pit.leftZ(j))) === pit.outer;
               let lim;
