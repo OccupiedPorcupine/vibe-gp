@@ -14,7 +14,7 @@ export default {
     widen: 0,
     width: [
       // pit straight: the Dorint hotel and ring buildings, then the main grandstand right behind the wall
-      [4700, 'L', 0, 250, 9],
+      [4800, 'L', 0, 150, 9],
       [4950, 'L', 0, 170, 5],
       [0, 'L', 0, 270, 6],
       [4500, 'R', 0, 620, 4], // pit wall from the pit entry
@@ -96,11 +96,13 @@ export default {
       [4300, 'R', 0, 50, 45],
       [4350, 'R', 0, 60, 40],
       [4250, 'L', 0, 70, 30], // the escape road around the inside
-      [4320, 'L', 0, 220, 20],
+      [4320, 'L', 0, 60, 28],
+      [4380, 'L', 0, 160, 42], // a wide grass field to the Armco by the Nordschleife link
       // Hyundai N Kurve (T16): gravel outside, crossed by the link to the Nordschleife
       [4540, 'L', 0, 60, 30],
       [4600, 'L', 0, 60, 40],
       [4660, 'L', 0, 40, 25],
+      [4700, 'L', 0, 100, 14], // a strip of gravel in front of the stand wall
     ],
     paved: [
       [340, 'L', 0, 120, strip(GREEN, 5)], // T1: green strip, then dark asphalt up to the gravel
@@ -123,7 +125,7 @@ export default {
       [3330, 'L', 0, 290, 1.5], // BILSTEIN-Kurve
       [3820, 'L', 0, 230, 1.5], // Falkenbogen
       [4250, 'R', 0, 160, 5], // Veedol-Schikane, behind the green
-      [4540, 'L', 0, 160, 3], // Hyundai N Kurve
+      [4540, 'L', 0, 270, 3], // Hyundai N Kurve, and the strip along the stand wall after it
     ],
     sausages: [], // none clearly visible on the imagery
   },
@@ -164,5 +166,7 @@ as rendered. The OSM centreline matches the asphalt to within a metre or two alm
 - Veedol-Schikane (T14-T15, ~4300): green strip and gravel outside the first part, an escape road
   round the inside. The circuit's highest point.
 - Hyundai N Kurve (T16, ~4600): gravel outside, crossed by the link roads to the Nordschleife,
-  whose start runs along the north side of the circuit.`,
+  whose start runs along the north side of the circuit. The pit lane runs round the inside behind
+  only kerbs and a green strip (pitOpen in scripts/circuits.mjs); the pit wall starts at ~4660.
+  A gravel strip along the stand wall on the left to ~4800.`,
 };

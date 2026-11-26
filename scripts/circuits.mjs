@@ -364,6 +364,9 @@ export const CIRCUITS = {
     // 3.6 km Sprintstrecke or the 1.5 km Muellenbachschleife). Start: OSM node 3099078401
     // raceway=start-finish (node 370477491 'Start-Ziel' 230 m back up the straight is untagged).
     center: [50.3315, 6.9420], radius: 2000,
+    // through the last corner the lane runs inside the track behind only kerbs and a green strip;
+    // the concrete pit wall starts at the exit (DOP20 orthophotos)
+    pitOpen: { at: [[4380, 4655]], note: 'kerbs and a painted strip, no wall, through the Hyundai N Kurve (T16)' },
     // names as signed in 2026 (Wikimedia Commons "Circuit Nürburgring-2026-GP.svg"); T1 was the
     // Castrol-S / Yokohama-S, T7 the Ford-Kurve, T8 the Dunlop-Kehre, T11-T12 the RTL- and
     // Bit-Kurve, T14-T15 the NGK-Schikane and T16 the Coca-Cola-Kurve in the F1 years

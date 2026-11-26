@@ -68,6 +68,8 @@ export default {
   ],
   // pit lane from OSM, from where it leaves the track to where it rejoins
   pitlane: {
+    // kerbs and a painted strip, no wall, through the Hyundai N Kurve (T16)
+    open: [[4380, 4655]],
     points: [
       [134.8, 377.9], [160.6, 381.3], [186.4, 384.8], [212.1, 388.7], [237.8, 393.1], [263.4, 397.5], [273.3, 399.2], [279.2, 399.9],
       [285.2, 400.1], [291.1, 399.4], [296.9, 397.7], [302.3, 395.2], [307.2, 391.9], [311.5, 387.7], [314.8, 382.7], [317.3, 377.3],
