@@ -26,7 +26,7 @@ globalThis.Path2D ??= class { constructor() {} addPath() {} moveTo() {} lineTo()
 const { TRACKS } = await import('../src/tracks/index.js');
 const { TrackPath, boxSegment, WALL_THICKNESS } = await import('../src/trackPath.js');
 const { CarPhysics } = await import('../src/physics.js');
-const { carBoxes, boxOverlap } = await import('../src/carShape.js');
+const { carBoxes, boxOverlap, boxGone } = await import('../src/carShape.js');
 const { collideCars, CONTACTS, Race, AIDriver, teamPace } = await import('../src/ai.js');
 const { TEAMS } = await import('../src/teams.js');
 
@@ -35,6 +35,7 @@ const check = (ok, label, detail = '') => {
   if (!ok) failures++;
   console.log(`  ${ok ? 'pass' : 'FAIL'}  ${label}${detail ? `  (${detail})` : ''}`);
 };
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const near = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol;
 
 const box = (cx, cz, yaw, hx, hy) => ({ cx, cz, fx: Math.sin(yaw), fz: Math.cos(yaw), hx, hy });
@@ -125,13 +126,14 @@ const PEN_TOL = 0.05; // m a box may end a step inside a wall
 const dt = 1 / 120;
 
 /**
- * Deepest overlap of any of the car's boxes with any wall, and which box. Swept from the
+ * Deepest overlap of any of the car's boxes (still on it) with any wall, and which box. Swept from the
  * car's centre, so a box whose centre is past a wall's line (a part through the wall)
  * counts in full, not as a shallow overlap from the far side.
  */
 function penetration(car) {
   let pen = 0, part = '';
   for (const b of carBoxes(car)) {
+    if (boxGone(car, b.def)) continue; // broken off: no longer part of the car
     const c = P.wallContactBox(b, car.position.x, car.position.z, car.height);
     if (c && c.depth > pen) [pen, part] = [c.depth, b.def.name];
   }
@@ -219,6 +221,51 @@ for (const s of SCENARIOS) {
   const ok = res.pen <= PEN_TOL && !res.through && hit;
   check(ok, s.label.padEnd(54),
     `circle ${fmt(base.pen, base.part)} | now pen ${fmt(res.pen, res.part)}${res.through ? ', WENT THROUGH' : ''}${hit ? `, hit ${res.car.impact.toFixed(1)} m/s` : ', NO HIT'}`);
+}
+
+// Wall hits turn the car from the contact point (#29): a front wing corner clipping the wall
+// at 20° turns the car away from it (towards running along it); a square hit doesn't turn it.
+// Coasting in from 4 m off the wall; the first impact's yaw kick, and the heading 0.4 s on.
+{
+  const hitAt = (deg, speed) => {
+    const a = (deg * Math.PI) / 180;
+    const dir = [t[0] * Math.cos(a) - n[0] * Math.sin(a), t[1] * Math.cos(a) - n[1] * Math.sin(a)];
+    const st = fromWall(4 + 3, -(4 + 3) / Math.tan(a), ...dir);
+    const car = new CarPhysics(P, { x: st.x, z: st.z, yaw: yawOf(...dir), y: 0 });
+    car.vel.x = dir[0] * speed;
+    car.vel.z = dir[1] * speed;
+    car.speed = speed;
+    for (const w of car.wheels) w.omega = speed / w.r;
+    // + = turning towards the wall (the heading's part into the wall growing)
+    const towards = () => car.yawRate * (Math.cos(car.yaw) * -n[0] - Math.sin(car.yaw) * -n[1]);
+    const into = () => (Math.asin(clamp(Math.sin(car.yaw) * -n[0] + Math.cos(car.yaw) * -n[1], -1, 1)) * 180) / Math.PI;
+    let kick = null, part = '', steps = 0;
+    const orig = P.wallContactBox;
+    P.wallContactBox = function (b, ...rest) {
+      const c = orig.call(this, b, ...rest);
+      if (c && kick === null && !part) part = b.def.name;
+      return c;
+    };
+    let pen = 0;
+    try {
+      for (let i = 0; i < 3 / dt && (kick === null || steps < 0.4 / dt); i++) {
+        car.step({ throttle: 0, brake: 0, steer: 0 }, dt);
+        if (kick === null && car.impact > 0) kick = towards();
+        else if (kick !== null) steps++;
+        pen = Math.max(pen, penetration(car).pen);
+      }
+    } finally {
+      P.wallContactBox = orig;
+    }
+    return { kick: kick ?? 0, part, heading: into(), pen, hit: car.impact };
+  };
+  const clip = hitAt(20, 30), square = hitAt(90, 20);
+  check(clip.part === 'wingL' && clip.kick < -1 && clip.heading < 20 && clip.pen <= PEN_TOL,
+    'front-left wing corner clips the wall at 20°, 30 m/s: the car turns away from it',
+    `first ${clip.part}, kick ${clip.kick.toFixed(2)} rad/s (− = away), 0.4 s on heading ${clip.heading.toFixed(1)}° into the wall, pen ${clip.pen.toFixed(2)} m`);
+  check(Math.abs(square.kick) < 0.1 && Math.abs(square.heading - 90) < 3 && square.pen <= PEN_TOL,
+    'square head-on hit at 20 m/s: little or no turn',
+    `first ${square.part}, kick ${square.kick.toFixed(3)} rad/s, 0.4 s on heading ${square.heading.toFixed(1)}° into the wall, pen ${square.pen.toFixed(2)} m`);
 }
 
 // A part that broke off isn't there to hit the wall: nose-first at 15°, left side leading,
