@@ -1,5 +1,6 @@
 // All selectable tracks, in menu order: the test oval, then the 2026 Formula 1 calendar in
-// round order (Bahrain and Jeddah were cancelled in March 2026 but keep their slots), then Imola.
+// round order (Bahrain and Jeddah were cancelled in March 2026 but keep their slots), then Imola
+// and the Nürburgring.
 import oval from './oval.js';
 import suzuka from './suzuka.js';
 import jeddah from './jeddah.js';
@@ -13,6 +14,7 @@ import interlagos from './interlagos.js';
 import lasvegas from './lasvegas.js';
 import yasmarina from './yasmarina.js';
 import imola from './imola.js';
+import nurburgring from './nurburgring.js';
 
 import suzukaLand from './land/suzuka.js';
 import jeddahLand from './land/jeddah.js';
@@ -26,6 +28,7 @@ import interlagosLand from './land/interlagos.js';
 import lasvegasLand from './land/lasvegas.js';
 import yasmarinaLand from './land/yasmarina.js';
 import imolaLand from './land/imola.js';
+import nurburgringLand from './land/nurburgring.js';
 
 // land.ground -> the scenery flags that pick the ground material (track.js)
 function groundFlags(ground) {
@@ -57,5 +60,6 @@ export const TRACKS = [
     [suzuka, suzukaLand, () => import('./land/osm/suzuka.js')], [jeddah, jeddahLand, () => import('./land/osm/jeddah.js')], [montreal, montrealLand, () => import('./land/osm/montreal.js')], [monaco, monacoLand, () => import('./land/osm/monaco.js')],
     [barcelona, barcelonaLand, () => import('./land/osm/barcelona.js')], [spa, spaLand, () => import('./land/osm/spa.js')], [hungaroring, hungaroringLand, () => import('./land/osm/hungaroring.js')], [zandvoort, zandvoortLand, () => import('./land/osm/zandvoort.js')],
     [interlagos, interlagosLand, () => import('./land/osm/interlagos.js')], [lasvegas, lasvegasLand, () => import('./land/osm/lasvegas.js')], [yasmarina, yasmarinaLand, () => import('./land/osm/yasmarina.js')], [imola, imolaLand, () => import('./land/osm/imola.js')],
+    [nurburgring, nurburgringLand, () => import('./land/osm/nurburgring.js')],
   ].map(([def, land, loadOsm]) => withLand(def, land, loadOsm)),
 ];

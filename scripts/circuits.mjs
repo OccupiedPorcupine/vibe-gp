@@ -356,4 +356,30 @@ export const CIRCUITS = {
     scenery: { trees: 0.45, conifer: 0.15 },
     elevation: { dataset: 'eudem25m', label: 'EU-DEM 25 m', median: 0, tol: 1 },
   },
+  nurburgring: {
+    name: 'Nürburgring', country: 'Germany', realLength: 5148, dir: 'cw',
+    // radius 2000 m takes in the start of the Nordschleife too, but its 20.8 km loops are far
+    // past realLength + 20%: the lap search only finds the GP layouts. The closest to 5148 m is
+    // the full GP-Strecke with the Mercedes-Arena (not the 4.5 km 24h variant without it, the
+    // 3.6 km Sprintstrecke or the 1.5 km Muellenbachschleife). Start: OSM node 3099078401
+    // raceway=start-finish (node 370477491 'Start-Ziel' 230 m back up the straight is untagged).
+    center: [50.3315, 6.9420], radius: 2000,
+    // names as signed in 2026 (Wikimedia Commons "Circuit Nürburgring-2026-GP.svg"); T1 was the
+    // Castrol-S / Yokohama-S, T7 the Ford-Kurve, T8 the Dunlop-Kehre, T11-T12 the RTL- and
+    // Bit-Kurve, T14-T15 the NGK-Schikane and T16 the Coca-Cola-Kurve in the F1 years
+    corners: [
+      ['RAVENOL-S', 50.331897, 6.940961], ['AMG Arena', 50.333521, 6.941330], ['PAGID Racing Kurve', 50.327317, 6.940463],
+      ['Goodyear-Kehre', 50.323954, 6.934841], ['Michael-Schumacher-S', 50.327071, 6.937331], ['Xiaomi Kurve', 50.331605, 6.938631],
+      ['BILSTEIN-Kurve', 50.332535, 6.936366], ['Falkenbogen', 50.335582, 6.939954], ['Veedol-Schikane', 50.337186, 6.946723],
+      ['Hyundai N Kurve', 50.337554, 6.949838],
+    ],
+    about: `Nürburgring Grand-Prix-Strecke, in the Eifel hills: the 5.148 km Grand Prix layout with
+      the Mercedes-Arena, driven clockwise (F1 2002-2013 and 2020). (Not on the 2026 calendar.)`,
+    kerbNote: 'red/white kerbs',
+    kerb: [RED, WHITE],
+    scenery: { trees: 0.4, conifer: 0.7 },
+    // 55 m (German Wikipedia, Nürburgring infobox), from the Veedol-Schikane at the top down to the
+    // Dunlop/Goodyear hairpin. EU-DEM shows 53.5 m with the same shape and no steps; scaled to the figure.
+    elevation: { dataset: 'eudem25m', label: 'EU-DEM 25 m', median: 0, tol: 1, range: 55 },
+  },
 };
