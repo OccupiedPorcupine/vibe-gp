@@ -79,6 +79,21 @@ export const RUNOFF = {
       ['Gresini', 'apexes', -25, 25], // the Variante Alta's yellow sausages
     ],
   },
+  // the hand-matched src/tracks/land/nurburgring.js replaces this; kept as the corner summary
+  nurburgring: {
+    gravel: 0xd3c6aa,
+    traps: [
+      ['RAVENOL-S', 'out', -60, 60],
+      ['PAGID Racing Kurve', 'out', -40, 160],
+      ['Goodyear-Kehre', 'out', -110, 290], // the old Dunlop-Kehre: the biggest bed on the circuit
+      ['Michael-Schumacher-S', 'both', -100, 200],
+      ['BILSTEIN-Kurve', 'out', -50, 240],
+      ['Falkenbogen', 'out', 0, 230],
+      ['Veedol-Schikane', 'out', -90, 70],
+      ['Hyundai N Kurve', 'out', -40, 120],
+    ],
+    sausages: [],
+  },
   suzuka: {
     gravel: 0xa9a294,
     traps: [
